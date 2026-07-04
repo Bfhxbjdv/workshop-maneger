@@ -1,0 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+* { font-family: 'Cairo', sans-serif; }
+body { background: #f0f2f5; }
+.navbar { box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+.card { border: none; box-shadow: 0 1px 4px rgba(0,0,0,0.1); border-radius: 10px; }
+.card-header { font-weight: 600; border-radius: 10px 10px 0 0 !important; }
+.table th { font-weight: 600; }
+.btn { border-radius: 8px; font-weight: 600; }
+.badge { font-size: 0.85rem; }
+.pagination { margin-bottom: 0; }
+.nav-tabs .nav-link { cursor: pointer; }
+.status-badge { padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+#clientSelect { max-height: 150px; overflow-y: auto; }
+#clientSelect option { padding: 6px; }
+.alert { border-radius: 10px; }

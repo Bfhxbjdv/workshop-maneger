@@ -1,0 +1,8 @@
+node_modules/
+data/
+uploads/
+backups/
+Server_Storage/
+*.db
+service-account-key.json
+.env

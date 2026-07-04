@@ -1,0 +1,28 @@
+{
+  "name": "workshop-manager",
+  "version": "1.0.0",
+  "description": "نظام إدارة ورشة التصميم والقص",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "init-db": "node database/init.js",
+    "backup": "node database/backup.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "ejs": "^6.0.1",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "googleapis": "^173.0.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
+    "sequelize": "^6.37.8",
+    "socket.io": "^4.8.3",
+    "sql.js": "^1.14.1"
+  }
+}

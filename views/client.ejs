@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>تفاصيل العميل - نظام إدارة الورشة</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/"><i class="bi bi-person-badge"></i> تفاصيل العميل</a>
+      <div>
+        <a href="/clients" class="btn btn-outline-light btn-sm"><i class="bi bi-people"></i> كل العملاء</a>
+        <a href="/" class="btn btn-outline-light btn-sm">الرئيسية</a>
+        <a href="/logout" class="btn btn-outline-light btn-sm">خروج</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid mt-3">
+    <div id="clientInfo" class="card mb-3">
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <h4 id="clientFullName"></h4>
+            <p><i class="bi bi-telephone"></i> <span id="clientPhone"></span></p>
+            <p><i class="bi bi-star-fill text-warning"></i> <span id="clientRating"></span></p>
+          </div>
+          <div class="col-md-6 text-md-end">
+            <p><strong>إجمالي الإنفاق:</strong> <span id="clientTotalSpent" class="text-success fs-5"></span></p>
+            <p><strong>ملاحظات:</strong> <span id="clientNotes"></span></p>
+            <p><strong>تاريخ التسجيل:</strong> <span id="clientDate"></span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-archive"></i> كامل طلبات وملفات العميل</span>
+        <span id="orderCount" class="badge bg-light text-dark"></span>
+      </div>
+      <div class="card-body">
+        <div id="ordersContainer"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/main.js"></script>
+  <script>
+    const clientId = <%= clientId %>;
+    loadClientDetail(clientId);
+  </script>
+</body>
+</html>
