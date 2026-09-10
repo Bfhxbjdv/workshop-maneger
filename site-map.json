@@ -1,0 +1,369 @@
+{
+  "_comment": "خريطة كاملة للموقع - للاستخدام مع الذكاء الصناعي لتسهيل التطوير",
+  "project": {
+    "name": "نظام إدارة ورشة التصميم والقص",
+    "version": "1.0.0",
+    "description": "نظام متكامل لإدارة ورشة الليزر والراوتر - طلبات عملاء - تصميم - قص - محاسبة",
+    "stack": {
+      "backend": "Node.js (Express 5)",
+      "database": "SQLite via sql.js",
+      "frontend": "EJS + Bootstrap 5",
+      "realtime": "Socket.IO",
+      "auth": "express-session + bcryptjs",
+      "pdf": "PDFKit",
+      "cloud": "Google Drive API (googleapis)"
+    },
+    "port": 3000,
+    "roles": ["Admin", "Designer", "Laser_Op", "Router_Op"],
+    "paths": {
+      "server": "server.js",
+      "routes": "routes/",
+      "views": "views/",
+      "database": "database/",
+      "services": "services/",
+      "public_js": "public/js/",
+      "public_css": "public/css/",
+      "uploads": "Server_Storage/Clients_Archive/",
+      "invoices": "Server_Storage/Invoices/",
+      "db_file": "data/workshop.db"
+    }
+  },
+
+  "routes": {
+    "auth": {
+      "file": "routes/auth.js",
+      "prefix": "/",
+      "endpoints": [
+        {"method": "GET", "path": "/login", "auth": false, "view": "login.ejs", "desc": "عرض صفحة تسجيل الدخول"},
+        {"method": "POST", "path": "/login", "auth": false, "desc": "تسجيل الدخول (bcrypt verify)"},
+        {"method": "GET", "path": "/logout", "auth": false, "desc": "تسجيل الخروج وتدمير الـ session"},
+        {"method": "GET", "path": "/me", "auth": false, "desc": "إرجاع بيانات المستخدم الحالي JSON"}
+      ]
+    },
+    "clients": {
+      "file": "routes/clients.js",
+      "prefix": "/api/clients",
+      "auth": ["Admin", "Designer"],
+      "endpoints": [
+        {"method": "GET", "path": "/api/clients", "desc": "قائمة العملاء مع pagination (50/page) وبحث"},
+        {"method": "GET", "path": "/api/clients/all", "desc": "بحث خفيف (max 20) للأوتوocomplete"},
+        {"method": "GET", "path": "/api/clients/:id", "desc": "تفاصيل عميل واحد"},
+        {"method": "GET", "path": "/api/clients/:id/orders", "desc": "جميع طلبات عميل مع المواد"},
+        {"method": "POST", "path": "/api/clients", "auth": ["Admin", "Designer"], "desc": "إضافة عميل جديد"},
+        {"method": "PUT", "path": "/api/clients/:id", "auth": ["Admin", "Designer"], "desc": "تحديث بيانات عميل"},
+        {"method": "DELETE", "path": "/api/clients/:id", "auth": ["Admin"], "desc": "حذف عميل"}
+      ]
+    },
+    "orders": {
+      "file": "routes/orders.js",
+      "prefix": "/api/orders",
+      "auth": ["Admin", "Designer", "Laser_Op", "Router_Op"],
+      "endpoints": [
+        {"method": "GET", "path": "/api/orders", "desc": "قائمة الطلبات مع filters (status, machine, search, page)"},
+        {"method": "GET", "path": "/api/orders/stats", "desc": "إحصائيات لوحة التحكم"},
+        {"method": "GET", "path": "/api/orders/notifications", "desc": "آخر 20 إشعار"},
+        {"method": "POST", "path": "/api/orders/notifications/read", "desc": "تحديد جميع الإشعارات كمقروءة"},
+        {"method": "POST", "path": "/api/orders", "auth": ["Admin", "Designer"], "desc": "إنشاء طلب جديد مع المواد"},
+        {"method": "PUT", "path": "/api/orders/:id", "auth": ["Admin", "Designer"], "desc": "تحديث الطلب (الحالة، المواد، الملاحظات) + حساب الربح عند التسليم"},
+        {"method": "PUT", "path": "/api/orders/:id/status", "desc": "تغيير حالة الطلب (مع socket.io + إشعار) + حساب الربح عند التسليم"},
+        {"method": "POST", "path": "/api/orders/:id/duplicate", "auth": ["Admin", "Designer"], "desc": "تكرار طلب لعميل جديد"},
+        {"method": "DELETE", "path": "/api/orders/:id", "auth": ["Admin", "Designer"], "desc": "حذف الطلب مع الملفات والمواد"}
+      ]
+    },
+    "files": {
+      "file": "routes/files.js",
+      "prefix": "/api/files",
+      "auth": ["Admin", "Designer"],
+      "endpoints": [
+        {"method": "POST", "path": "/api/files/upload/:taskId", "desc": "رفع ملف تصميم مع المواد (يدعم gdrive)"},
+        {"method": "GET", "path": "/api/files/download/:taskId", "desc": "تحميل ملف التصميم"},
+        {"method": "DELETE", "path": "/api/files/:taskId", "desc": "حذف ملف التصميم"}
+      ]
+    },
+    "inventory": {
+      "file": "routes/inventory.js",
+      "prefix": "/api/inventory",
+      "auth": ["Admin", "Designer", "Laser_Op", "Router_Op"],
+      "endpoints": [
+        {"method": "GET", "path": "/api/inventory", "desc": "جميع المواد"},
+        {"method": "POST", "path": "/api/inventory", "auth": ["Admin", "Designer"], "desc": "إضافة مادة"},
+        {"method": "PUT", "path": "/api/inventory/:id", "auth": ["Admin", "Designer"], "desc": "تحديث مادة"},
+        {"method": "PUT", "path": "/api/inventory/:id/deduct", "desc": "خصم كمية من المادة"}
+      ]
+    },
+    "users": {
+      "file": "routes/users.js",
+      "prefix": "/api/users",
+      "auth": ["Admin"],
+      "endpoints": [
+        {"method": "GET", "path": "/api/users", "desc": "جميع المستخدمين"},
+        {"method": "POST", "path": "/api/users", "desc": "إضافة مستخدم"},
+        {"method": "PUT", "path": "/api/users/:id", "desc": "تحديث مستخدم"},
+        {"method": "DELETE", "path": "/api/users/:id", "desc": "حذف مستخدم (لا يمكن حذف Admin)"}
+      ]
+    },
+    "invoices": {
+      "file": "routes/invoices.js",
+      "prefix": "/api/invoices",
+      "auth": ["Admin"],
+      "endpoints": [
+        {"method": "GET", "path": "/api/invoices", "desc": "قائمة الفواتير مع بحث وفلتر حالة"},
+        {"method": "POST", "path": "/api/invoices", "desc": "إنشاء فاتورة (توليد PDF + gdrive + حساب الربح + خصم المخزون)"},
+        {"method": "GET", "path": "/api/invoices/:id", "desc": "بيانات فاتورة JSON"},
+        {"method": "GET", "path": "/api/invoices/:id/pdf", "desc": "تحميل PDF"},
+        {"method": "GET", "path": "/api/invoices/:id/view", "view": "invoice.ejs", "desc": "عرض فاتورة في المتصفح"},
+        {"method": "DELETE", "path": "/api/invoices/:id", "desc": "حذف فاتورة"}
+      ]
+    },
+    "admin": {
+      "file": "routes/admin.js",
+      "prefix": "/admin",
+      "auth": ["Admin"],
+      "endpoints": [
+        {"method": "GET", "path": "/admin", "view": "admin.ejs", "desc": "لوحة تحكم المدير (تبويبات)"},
+        {"method": "GET", "path": "/admin/api/admin-stats", "desc": "إحصائيات لوحة المدير"},
+        {"method": "GET", "path": "/admin/api/logs", "desc": "سجل الإجراءات مع pagination"},
+        {"method": "POST", "path": "/admin/api/logs", "desc": "تسجيل إجراء جديد"},
+        {"method": "GET", "path": "/admin/api/expenses", "desc": "قائمة المصروفات مع بحث"},
+        {"method": "POST", "path": "/admin/api/expenses", "desc": "إضافة مصروف"},
+        {"method": "PUT", "path": "/admin/api/expenses/:id", "desc": "تحديث مصروف"},
+        {"method": "DELETE", "path": "/admin/api/expenses/:id", "desc": "حذف مصروف"},
+        {"method": "POST", "path": "/admin/api/backup", "desc": "إنشاء نسخة احتياطية من DB"},
+        {"method": "GET", "path": "/admin/api/backups", "desc": "قائمة النسخ الاحتياطية"},
+        {"method": "GET", "path": "/admin/api/upload-queue", "desc": "قائمة انتظار رفع Drive"},
+        {"method": "POST", "path": "/admin/api/upload-queue/retry/:id", "desc": "إعادة محاولة رفع عنصر"},
+        {"method": "POST", "path": "/admin/api/upload-queue/retry-all", "desc": "إعادة محاولة جميع الفاشلة"},
+        {"method": "GET", "path": "/admin/api/system-info", "desc": "معلومات النظام (Node, uptime, memory, storage)"},
+        {"method": "POST", "path": "/admin/api/sync-now", "desc": "مزامنة يدوية مع Google Drive"}
+      ]
+    },
+    "page_routes": {
+      "file": "server.js",
+      "endpoints": [
+        {"path": "/", "view": "dashboard/designer/laser/router.ejs", "auth": true, "desc": "الصفحة الرئيسية - تختلف حسب الـ role"},
+        {"path": "/login", "view": "login.ejs", "auth": false, "desc": "صفحة الدخول"},
+        {"path": "/clients", "view": "clients.ejs", "auth": true, "desc": "صفحة العملاء"},
+        {"path": "/client/:id", "view": "client.ejs", "auth": true, "desc": "صفحة عميل واحد"},
+        {"path": "/inventory", "view": "inventory.ejs", "auth": true, "desc": "صفحة المخزون"},
+        {"path": "/invoices", "view": "invoices.ejs", "auth": true, "desc": "صفحة الفواتير"},
+        {"path": "/users", "view": "users.ejs", "auth": ["Admin"], "desc": "صفحة المستخدمين"},
+        {"path": "/admin", "view": "admin.ejs", "auth": ["Admin"], "desc": "لوحة تحكم المدير (تبويبات)"},
+        {"path": "/expenses", "view": "expenses.ejs", "auth": true, "desc": "صفحة المصروفات المستقلة"}
+      ]
+    }
+  },
+
+  "database": {
+    "engine": "sql.js (SQLite WASM)",
+    "db_file": "data/workshop.db",
+    "connection": "database/connection.js",
+    "init": "database/init.js",
+    "tables": {
+      "Users": {
+        "columns": [
+          {"name": "User_ID", "type": "INTEGER", "pk": true, "autoincrement": true},
+          {"name": "Name", "type": "TEXT", "not_null": true},
+          {"name": "Role", "type": "TEXT", "check": "Admin|Designer|Laser_Op|Router_Op"},
+          {"name": "Username", "type": "TEXT", "unique": true},
+          {"name": "Password", "type": "TEXT", "note": "bcrypt hash"},
+          {"name": "Created_At", "type": "DATETIME", "default": "CURRENT_TIMESTAMP"}
+        ]
+      },
+      "Clients": {
+        "columns": [
+          {"name": "Client_ID", "type": "INTEGER", "pk": true},
+          {"name": "Full_Name", "type": "TEXT"},
+          {"name": "Phone_Number", "type": "TEXT"},
+          {"name": "Rating", "type": "INTEGER", "default": 3, "range": "1-5"},
+          {"name": "Total_Spent", "type": "REAL", "default": 0},
+          {"name": "Notes", "type": "TEXT"},
+          {"name": "Created_At", "type": "DATETIME"}
+        ]
+      },
+      "Inventory": {
+        "columns": [
+          {"name": "Material_ID", "type": "INTEGER", "pk": true},
+          {"name": "Material_Name", "type": "TEXT"},
+          {"name": "Thickness", "type": "TEXT"},
+          {"name": "Quantity", "type": "REAL", "default": 0},
+          {"name": "Cost_Per_Unit", "type": "REAL", "default": 0},
+          {"name": "Created_At", "type": "DATETIME"}
+        ]
+      },
+      "Orders": {
+        "columns": [
+          {"name": "Task_ID", "type": "INTEGER", "pk": true},
+          {"name": "Client_ID", "type": "INTEGER", "fk": "Clients(Client_ID)"},
+          {"name": "Designer_ID", "type": "INTEGER", "fk": "Users(User_ID)"},
+          {"name": "Machine_Type", "type": "TEXT", "check": "Laser|Router"},
+          {"name": "Status", "type": "TEXT", "check": "قيد التصميم|جاهز للقص|قيد التنفيذ|تم التغليف|تم التسليم"},
+          {"name": "Material_ID", "type": "INTEGER", "fk": "Inventory(Material_ID)"},
+          {"name": "Material_Qty", "type": "REAL", "default": 0},
+          {"name": "Price", "type": "REAL", "default": 0, "note": "سعر البيع"},
+          {"name": "Cost", "type": "REAL", "default": 0, "note": "التكلفة الإجمالية"},
+          {"name": "Profit", "type": "REAL", "default": 0, "note": "الربح = Price - Cost (يحسب آلياً عند التسليم/الفاتورة)"},
+          {"name": "File_Path", "type": "TEXT", "note": "local path or gdrive://fileId"},
+          {"name": "File_Name", "type": "TEXT"},
+          {"name": "Notes", "type": "TEXT"},
+          {"name": "Created_At", "type": "DATETIME"},
+          {"name": "Updated_At", "type": "DATETIME"}
+        ],
+        "status_flow": ["قيد التصميم", "جاهز للقص", "قيد التنفيذ", "تم التغليف", "تم التسليم"]
+      },
+      "Order_Materials": {
+        "columns": [
+          {"name": "ID", "type": "INTEGER", "pk": true},
+          {"name": "Task_ID", "type": "INTEGER", "fk": "Orders(Task_ID) ON DELETE CASCADE"},
+          {"name": "Material_ID", "type": "INTEGER", "fk": "Inventory(Material_ID)"},
+          {"name": "Quantity", "type": "REAL", "default": 0}
+        ]
+      },
+      "Invoices": {
+        "columns": [
+          {"name": "Invoice_ID", "type": "INTEGER", "pk": true},
+          {"name": "Order_Task_ID", "type": "INTEGER", "fk": "Orders(Task_ID)"},
+          {"name": "Client_ID", "type": "INTEGER", "fk": "Clients(Client_ID)"},
+          {"name": "Invoice_Number", "type": "TEXT", "unique": true, "format": "INV-00001"},
+          {"name": "Amount", "type": "REAL"},
+          {"name": "Amount_Paid", "type": "REAL", "default": 0},
+          {"name": "Payment_Method", "type": "TEXT", "default": "نقداً"},
+          {"name": "Status", "type": "TEXT", "check": "مدفوعة|غير مدفوعة|ملغية"},
+          {"name": "Notes", "type": "TEXT"},
+          {"name": "File_Path", "type": "TEXT"},
+          {"name": "Created_At", "type": "DATETIME"}
+        ]
+      },
+      "Notifications": {
+        "columns": [
+          {"name": "Notif_ID", "type": "INTEGER", "pk": true},
+          {"name": "Task_ID", "type": "INTEGER", "fk": "Orders(Task_ID)"},
+          {"name": "Message", "type": "TEXT"},
+          {"name": "Type", "type": "TEXT", "default": "info"},
+          {"name": "Is_Read", "type": "INTEGER", "default": 0},
+          {"name": "Created_At", "type": "DATETIME"}
+        ]
+      },
+      "Expenses": {
+        "columns": [
+          {"name": "Expense_ID", "type": "INTEGER", "pk": true},
+          {"name": "Description", "type": "TEXT", "not_null": true},
+          {"name": "Category", "type": "TEXT", "default": "أخرى"},
+          {"name": "Amount", "type": "REAL", "not_null": true},
+          {"name": "Expense_Date", "type": "TEXT", "not_null": true},
+          {"name": "Notes", "type": "TEXT"},
+          {"name": "Created_At", "type": "DATETIME"}
+        ],
+        "categories": ["خامات", "كهرباء", "صيانة", "إيجار", "رواتب", "نقل", "تسويق", "أخرى"]
+      },
+      "Upload_Queue": {
+        "columns": [
+          {"name": "Queue_ID", "type": "INTEGER", "pk": true},
+          {"name": "Task_ID", "type": "INTEGER", "not_null": true},
+          {"name": "Client_Name", "type": "TEXT"},
+          {"name": "Original_Name", "type": "TEXT", "not_null": true},
+          {"name": "File_Path", "type": "TEXT", "not_null": true},
+          {"name": "File_Buffer", "type": "BLOB"},
+          {"name": "Status", "type": "TEXT", "check": "pending|uploading|done|failed", "default": "pending"},
+          {"name": "Error", "type": "TEXT"},
+          {"name": "Created_At", "type": "DATETIME"}
+        ]
+      },
+      "System_Logs": {
+        "columns": [
+          {"name": "Log_ID", "type": "INTEGER", "pk": true},
+          {"name": "Action", "type": "TEXT", "not_null": true},
+          {"name": "User_ID", "type": "INTEGER", "fk": "Users(User_ID)"},
+          {"name": "Details", "type": "TEXT"},
+          {"name": "Created_At", "type": "DATETIME"}
+        ]
+      }
+    }
+  },
+
+  "views": {
+    "login.ejs": "تسجيل الدخول",
+    "dashboard.ejs": "لوحة تحكم المدير (إحصائيات)",
+    "designer.ejs": "لوحة المصمم (إنشاء/إدارة الطلبات)",
+    "laser.ejs": "لوحة مشغل الليزر",
+    "router.ejs": "لوحة مشغل الراوتر",
+    "clients.ejs": "قائمة العملاء",
+    "client.ejs": "تفاصيل عميل وطلباته",
+    "inventory.ejs": "إدارة المخزون",
+    "invoices.ejs": "قائمة الفواتير",
+    "invoice.ejs": "عرض/طباعة فاتورة",
+    "users.ejs": "إدارة المستخدمين (Admin)",
+    "admin.ejs": "لوحة تحكم المدير (تبويبات: Dashboard, Expenses, Sync, Backup, Logs, System)",
+    "expenses.ejs": "صفحة المصروفات المستقلة"
+  },
+
+  "public_js_functions": {
+    "main.js": [
+      "socket.on('order-update')", "socket.on('notification')",
+      "showToast(msg, type)", "loadOrders(page, filter)", "loadMaterials(targetSelect)",
+      "addOrderMaterialRow()", "openUploadModal(taskId)", "addMaterialRow()", "uploadDesignFile()",
+      "duplicateOrder(taskId)", "openUpdateModal(taskId, status)", "updateOrderStatus()",
+      "deleteOrder(taskId)", "deleteFile(taskId)", "createInvoiceFromOrder(taskId)",
+      "loadLaserOrders()", "loadRouterOrders()", "completeOrder(taskId)",
+      "loadStats()", "loadClients(page)", "editClient(id)", "saveClient()",
+      "loadClientDetail(clientId)", "loadInventory()", "saveMaterial()",
+      "loadUsers()", "saveUser()", "deleteUser(id)",
+      "loadInvoices(page)", "debounce(fn, delay)", "renderPagination(elementId, page, total)"
+    ],
+    "admin.js (inline in admin.ejs)": [
+      "switchTab(tabName)", "loadAdminStats()",
+      "loadExpenses()", "saveExpense()", "editExpense(id)", "deleteExpense(id)",
+      "loadUploadQueue()", "retryUpload(id)", "retryAll()", "syncNow()",
+      "createBackup()", "loadBackups()",
+      "loadLogs(page)", "loadSystemInfo()"
+    ]
+  },
+
+  "services": {
+    "googleDrive.js": {
+      "functions": [
+        "getOAuthClient()", "getStoredTokens()", "getClient()",
+        "ensureFolder(parentId, name)", "getTreeFolder(clientName, rootFolderId)",
+        "uploadFile(taskId, clientName, originalName, fileBuffer)",
+        "downloadFile(fileId)", "deleteFile(fileId)", "isConfigured()"
+      ],
+      "auth_method": "OAuth 2.0 (user consent) أو Service Account (JSON key)",
+      "console_url": "https://console.cloud.google.com/apis/credentials",
+      "scopes": ["https://www.googleapis.com/auth/drive.file"],
+      "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+      "token_file": "tokens.json",
+      "env_vars": ["GOOGLE_DRIVE_CLIENT_ID", "GOOGLE_DRIVE_CLIENT_SECRET", "GOOGLE_DRIVE_FOLDER_ID"],
+      "setup_steps": "1) GOOGLE_DRIVE_CLIENT_ID + GOOGLE_DRIVE_CLIENT_SECRET في .env  2) تثبيت tokens.json  3) GOOGLE_DRIVE_FOLDER_ID في .env"
+    }
+  },
+
+  "auth_middleware": {
+    "file": "middleware/auth.js",
+    "function": "requireAuth(roles[])",
+    "behavior": "يمنع الوصول لغير المسجلين; يعيد 401/403 JSON لطلبات XHR, redirect للصفحات"
+  },
+
+  "file_storage": {
+    "local_base": "Server_Storage/Clients_Archive/",
+    "structure": "ClientName/Year/Month/",
+    "supported_formats": ["DXF", "CDR", "AI", "EPS", "SVG", "PDF", "PLT"],
+    "max_size_mb": 100,
+    "invoices_dir": "Server_Storage/Invoices/",
+    "prefix_gdrive": "gdrive://fileId",
+    "prefix_local": "absolute or relative path"
+  },
+
+  "socket_io": {
+    "server_emits": ["order-update", "notification"],
+    "client_listens": ["order-update", "notification"],
+    "rooms": ["general"]
+  },
+
+  "launcher": {
+    "script": "launcher.ps1",
+    "start_bat": "start.bat",
+    "description": "PowerShell script: kill old node.exe, start server.js, show localhost:3000 + LAN IP:3000",
+    "note": "لا يستخدم ngrok أو Cloudflare Tunnel - تشغيل محلي فقط",
+    "auto_open": true,
+    "ports": [3000]
+  }
+}

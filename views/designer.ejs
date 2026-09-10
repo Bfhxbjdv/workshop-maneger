@@ -14,8 +14,15 @@
       <a class="navbar-brand" href="/"><i class="bi bi-pencil-square"></i> واجهة المصمم</a>
       <span class="navbar-text text-white"><i class="bi bi-person-circle"></i> <%= user.name %></span>
       <div>
-        <a href="/clients" class="btn btn-outline-light btn-sm"><i class="bi bi-people"></i> العملاء</a>
-        <a href="/inventory" class="btn btn-outline-light btn-sm"><i class="bi bi-box"></i> المخزون</a>
+        <% if (user.role === 'Admin' || (user.permissions && user.permissions.clients)) { %>
+          <a href="/clients" class="btn btn-outline-light btn-sm"><i class="bi bi-people"></i> العملاء</a>
+        <% } %>
+        <% if (user.role === 'Admin' || (user.permissions && user.permissions.inventory)) { %>
+          <a href="/inventory" class="btn btn-outline-light btn-sm"><i class="bi bi-box"></i> المخزون</a>
+        <% } %>
+        <% if (user.role === 'Admin' || (user.permissions && user.permissions.invoices)) { %>
+          <a href="/invoices" class="btn btn-outline-light btn-sm"><i class="bi bi-receipt"></i> الفواتير</a>
+        <% } %>
         <a href="/logout" class="btn btn-outline-light btn-sm">خروج</a>
       </div>
     </div>
@@ -145,7 +152,7 @@
           <input type="hidden" id="uploadTaskId">
           <div class="mb-3">
             <label class="form-label">ملف التصميم (DXF, CDR, AI, EPS, SVG, PDF, PLT)</label>
-            <input type="file" id="uploadFile" class="form-control" accept=".dxf,.cdr,.ai,.eps,.svg,.pdf,.plt">
+            <input type="file" id="uploadFile" class="form-control">
           </div>
           <div class="card bg-light mb-3">
             <div class="card-header d-flex justify-content-between">

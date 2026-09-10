@@ -5,16 +5,17 @@ const db = require('../database/connection');
 const { requireAuth } = require('../middleware/auth');
 
 router.get('/', requireAuth(['Admin']), (req, res) => {
-  const users = db.all("SELECT User_ID, Name, Role, Username, Created_At FROM Users");
+  const users = db.all("SELECT User_ID, Name, Role, Username, Permissions, Created_At FROM Users");
   res.json(users);
 });
 
 router.post('/', requireAuth(['Admin']), (req, res) => {
-  const { Name, Role, Username, Password } = req.body;
+  const { Name, Role, Username, Password, Permissions } = req.body;
   if (!Name || !Role || !Username || !Password) return res.status(400).json({ error: 'جميع الحقول مطلوبة' });
   const hash = bcrypt.hashSync(Password, 10);
+  const perms = JSON.stringify(Permissions || {});
   try {
-    db.run("INSERT INTO Users (Name, Role, Username, Password) VALUES (?, ?, ?, ?)", [Name, Role, Username, hash]);
+    db.run("INSERT INTO Users (Name, Role, Username, Password, Permissions) VALUES (?, ?, ?, ?, ?)", [Name, Role, Username, hash, perms]);
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: 'اسم المستخدم موجود مسبقاً' });
@@ -22,12 +23,13 @@ router.post('/', requireAuth(['Admin']), (req, res) => {
 });
 
 router.put('/:id', requireAuth(['Admin']), (req, res) => {
-  const { Name, Role, Password } = req.body;
+  const { Name, Role, Password, Permissions } = req.body;
+  const perms = JSON.stringify(Permissions || {});
   if (Password) {
     const hash = bcrypt.hashSync(Password, 10);
-    db.run("UPDATE Users SET Name=?, Role=?, Password=? WHERE User_ID=?", [Name, Role, hash, req.params.id]);
+    db.run("UPDATE Users SET Name=?, Role=?, Password=?, Permissions=? WHERE User_ID=?", [Name, Role, hash, perms, req.params.id]);
   } else {
-    db.run("UPDATE Users SET Name=?, Role=? WHERE User_ID=?", [Name, Role, req.params.id]);
+    db.run("UPDATE Users SET Name=?, Role=?, Permissions=? WHERE User_ID=?", [Name, Role, perms, req.params.id]);
   }
   res.json({ success: true });
 });

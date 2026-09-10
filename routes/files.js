@@ -4,7 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const db = require('../database/connection');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 const gdrive = require('../services/googleDrive');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
@@ -13,14 +13,7 @@ if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
 const upload = multer({
   dest: path.join(__dirname, '..', 'uploads'),
   limits: { fileSize: 100 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (['.dxf', '.cdr', '.ai', '.eps', '.svg', '.pdf', '.plt'].includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('صيغة الملف غير مدعومة. الصيغ المدعومة: DXF, CDR, AI, EPS, SVG, PDF, PLT'));
-    }
-  }
+  fileFilter: (req, file, cb) => { cb(null, true); }
 });
 
 function ensureClientDir(clientName) {
@@ -41,33 +34,62 @@ function ensureDateDir(clientDir) {
   return monthDir;
 }
 
-router.post('/upload/:taskId', requireAuth(['Admin', 'Designer']), (req, res) => {
+// Check internet connectivity
+function checkConnectivity() {
+  return new Promise((resolve) => {
+    const http = require('http');
+    const req = http.get('http://clients3.google.com/generate_204', { timeout: 3000 }, (res) => {
+      resolve(res.statusCode === 204);
+      req.destroy();
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+router.post('/upload/:taskId', requirePermission('orders'), (req, res) => {
   upload.single('file')(req, res, async (err) => {
+    try {
     if (err) return res.status(400).json({ error: err.message });
 
     const taskId = req.params.taskId;
     const order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [taskId]);
     if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
 
-    const useGdrive = gdrive.isConfigured();
-    let filePath = '';
-    let fileName = req.file.originalname;
+    // Always save locally first
+    const clientDir = ensureClientDir(order.Client_Name || `client_${order.Client_ID}`);
+    const dateDir = ensureDateDir(clientDir);
+    const ext = path.extname(req.file.originalname);
+    const newName = `TaskID_${taskId}_${path.basename(req.file.originalname, ext)}${ext}`;
+    const localPath = path.join(dateDir, newName);
+    fs.renameSync(req.file.path, localPath);
 
-    if (useGdrive) {
-      const result = await gdrive.uploadFile(taskId, order.Client_Name, req.file.originalname, fs.readFileSync(req.file.path));
-      if (result.error) return res.status(500).json({ error: result.error });
-      filePath = `gdrive://${result.fileId}`;
-      fileName = result.fileName;
-      fs.unlinkSync(req.file.path);
+    let filePath = path.relative(STORAGE, localPath);
+    let fileName = newName;
+
+    // Try Drive upload (online) or queue (offline)
+    const isOnline = await checkConnectivity();
+    if (isOnline && gdrive.isConfigured()) {
+      try {
+        const buffer = fs.readFileSync(localPath);
+        const result = await gdrive.uploadFile(taskId, order.Client_Name, fileName, buffer);
+        if (result && result.fileId) {
+          filePath = `gdrive://${result.fileId}`;
+          fileName = result.fileName;
+        } else {
+          // API returned an error, queue for later sync
+          db.run("INSERT INTO Upload_Queue (Task_ID, Client_Name, Original_Name, File_Path) VALUES (?, ?, ?, ?)",
+            [taskId, order.Client_Name, fileName, localPath]);
+        }
+      } catch (e) {
+        // Network error, queue for later sync
+        db.run("INSERT INTO Upload_Queue (Task_ID, Client_Name, Original_Name, File_Path) VALUES (?, ?, ?, ?)",
+          [taskId, order.Client_Name, fileName, localPath]);
+      }
     } else {
-      const clientDir = ensureClientDir(order.Client_Name || `client_${order.Client_ID}`);
-      const dateDir = ensureDateDir(clientDir);
-      const ext = path.extname(req.file.originalname);
-      const newName = `TaskID_${taskId}_${path.basename(req.file.originalname, ext)}${ext}`;
-      const destPath = path.join(dateDir, newName);
-      fs.renameSync(req.file.path, destPath);
-      filePath = path.relative(STORAGE, destPath);
-      fileName = newName;
+      // Offline: save locally and queue for Drive
+      db.run("INSERT INTO Upload_Queue (Task_ID, Client_Name, Original_Name, File_Path) VALUES (?, ?, ?, ?)",
+        [taskId, order.Client_Name, fileName, localPath]);
     }
 
     db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [filePath, fileName, taskId]);
@@ -97,7 +119,8 @@ router.post('/upload/:taskId', requireAuth(['Admin', 'Designer']), (req, res) =>
       global.io.emit('notification', { message: `تم رفع ملف جديد للطلب #${taskId}`, type: 'info' });
     }
 
-    res.json({ order: updated, filePath, storage: useGdrive ? 'gdrive' : 'local' });
+    res.json({ order: updated, filePath, storage: filePath.startsWith('gdrive://') ? 'gdrive' : 'local' });
+    } catch (e) { console.error('Upload error:', e); res.status(500).json({ error: e.message || 'فشل رفع الملف' }); }
   });
 });
 
@@ -113,6 +136,9 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
       res.setHeader('Content-Disposition', `attachment; filename="${order.File_Name || `task_${order.Task_ID}.dxf`}"`);
       fileStream.pipe(res);
     } catch (e) {
+      // Fallback to local if Drive fails
+      const localPath = path.join(STORAGE, order.File_Path);
+      if (fs.existsSync(localPath)) return res.download(localPath, order.File_Name);
       res.status(500).json({ error: 'خطأ في تحميل الملف من Google Drive' });
     }
     return;
@@ -123,7 +149,7 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
   res.download(filePath, order.File_Name || `task_${order.Task_ID}.dxf`);
 });
 
-router.delete('/:taskId', requireAuth(['Admin', 'Designer']), async (req, res) => {
+router.delete('/:taskId', requirePermission('orders'), async (req, res) => {
   const order = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.taskId]);
   if (order && order.File_Path) {
     if (order.File_Path.startsWith('gdrive://')) {

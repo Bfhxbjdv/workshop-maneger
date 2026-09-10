@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>المصروفات - نظام إدارة الورشة</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-danger">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/"><i class="bi bi-cash-stack"></i> المصروفات</a>
+      <span class="navbar-text text-white"><i class="bi bi-person-circle"></i> <%= user.name %></span>
+      <div>
+        <a href="/admin" class="btn btn-outline-light btn-sm"><i class="bi bi-gear"></i> لوحة التحكم</a>
+        <a href="/logout" class="btn btn-outline-light btn-sm">خروج</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid mt-3">
+    <div class="d-flex justify-content-between mb-3">
+      <h4>إدارة المصروفات</h4>
+      <button class="btn btn-danger" onclick="showExpenseModal()"><i class="bi bi-plus"></i> إضافة مصروف</button>
+    </div>
+
+    <div class="row mb-3">
+      <div class="col-md-3"><div class="card bg-danger text-white p-3 text-center"><h3 id="totalExpenses">0</h3><small>إجمالي المصروفات</small></div></div>
+      <div class="col-md-3"><div class="card bg-success text-white p-3 text-center"><h3 id="totalRevenue">0</h3><small>إجمالي الإيرادات</small></div></div>
+      <div class="col-md-3"><div class="card bg-primary text-white p-3 text-center"><h3 id="netProfit">0</h3><small>صافي الربح</small></div></div>
+      <div class="col-md-3"><div class="card bg-info text-white p-3 text-center"><h3 id="expenseCount">0</h3><small>عدد المصروفات</small></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <input type="text" id="expenseSearch" class="form-control mb-2" placeholder="بحث عن مصروف...">
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead><tr><th>#</th><th>البيان</th><th>التصنيف</th><th>المبلغ</th><th>التاريخ</th><th>ملاحظات</th><th></th></tr></thead>
+            <tbody id="expensesTableBody"></tbody>
+          </table>
+        </div>
+        <nav><ul class="pagination pagination-sm justify-content-center" id="expensesPagination"></ul></nav>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expense Modal -->
+  <div class="modal fade" id="expenseModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">مصروف جديد</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <input id="expenseId" type="hidden">
+        <div class="mb-2"><label class="form-label">البيان *</label><input id="expenseDesc" class="form-control"></div>
+        <div class="mb-2"><label class="form-label">التصنيف</label>
+          <select id="expenseCat" class="form-select">
+            <option>مواد خام</option><option>صيانة</option><option>كهرباء</option><option>إيجار</option><option>رواتب</option><option>تسويق</option><option>أخرى</option>
+          </select>
+        </div>
+        <div class="mb-2"><label class="form-label">المبلغ *</label><input id="expenseAmount" type="number" step="0.01" class="form-control"></div>
+        <div class="mb-2"><label class="form-label">التاريخ</label><input id="expenseDate" type="date" class="form-control"></div>
+        <div class="mb-2"><label class="form-label">ملاحظات</label><textarea id="expenseNotes" class="form-control" rows="2"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" onclick="saveExpense()">حفظ</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+      </div>
+    </div></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/main.js"></script>
+  <script>
+    let expPage = 1;
+
+    async function loadExpenses(page) {
+      if (page) expPage = page;
+      const search = document.getElementById('expenseSearch')?.value || '';
+      const d = await fetch(`/admin/api/expenses?page=${expPage}&search=${encodeURIComponent(search)}`).then(r => r.json());
+      const tbody = document.getElementById('expensesTableBody');
+      tbody.innerHTML = !d.expenses?.length
+        ? '<tr><td colspan="7" class="text-center">لا توجد مصروفات</td></tr>'
+        : d.expenses.map(e => `<tr>
+          <td>${e.Expense_ID}</td><td>${e.Description}</td>
+          <td><span class="badge bg-secondary">${e.Category}</span></td>
+          <td class="text-danger fw-bold">${parseFloat(e.Amount).toFixed(2)}</td>
+          <td>${e.Expense_Date}</td>
+          <td><small>${e.Notes || ''}</small></td>
+          <td><button class="btn btn-sm btn-outline-danger" onclick="deleteExpense(${e.Expense_ID})"><i class="bi bi-trash"></i></button></td>
+        </tr>`).join('');
+      const ul = document.getElementById('expensesPagination');
+      ul.innerHTML = '';
+      if (d.pages > 1) {
+        for (let i = 1; i <= d.pages; i++) {
+          const li = document.createElement('li');
+          li.className = `page-item ${i === d.page ? 'active' : ''}`;
+          li.innerHTML = `<a class="page-link" href="#">${i}</a>`;
+          li.addEventListener('click', e => { e.preventDefault(); loadExpenses(i); });
+          ul.appendChild(li);
+        }
+      }
+
+      const stats = await fetch('/admin/api/admin-stats').then(r => r.json());
+      document.getElementById('totalExpenses').textContent = parseFloat(stats.totalExpenses).toFixed(2);
+      document.getElementById('totalRevenue').textContent = parseFloat(stats.totalRevenue).toFixed(2);
+      document.getElementById('netProfit').textContent = parseFloat(stats.totalRevenue - stats.totalExpenses).toFixed(2);
+      document.getElementById('expenseCount').textContent = d.expenses?.length || 0;
+    }
+
+    document.getElementById('expenseSearch').addEventListener('input', debounce(() => loadExpenses(1), 300));
+    loadExpenses();
+
+    function showExpenseModal() {
+      ['expenseId','expenseDesc','expenseAmount','expenseNotes'].forEach(id => document.getElementById(id).value = '');
+      document.getElementById('expenseCat').value = 'أخرى';
+      document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
+      new bootstrap.Modal(document.getElementById('expenseModal')).show();
+    }
+
+    async function saveExpense() {
+      const desc = document.getElementById('expenseDesc').value;
+      const amount = document.getElementById('expenseAmount').value;
+      if (!desc || !amount) { showToast('البيان والمبلغ مطلوبان', 'warning'); return; }
+      const r = await fetch('/admin/api/expenses', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          Description: desc, Category: document.getElementById('expenseCat').value,
+          Amount: amount, Expense_Date: document.getElementById('expenseDate').value,
+          Notes: document.getElementById('expenseNotes').value
+        })
+      }).then(r => r.json());
+      if (r.error) { showToast(r.error, 'danger'); return; }
+      showToast('تم إضافة المصروف ✓', 'success');
+      bootstrap.Modal.getInstance(document.getElementById('expenseModal')).hide();
+      loadExpenses();
+    }
+
+    async function deleteExpense(id) {
+      if (!confirm('حذف هذا المصروف؟')) return;
+      await fetch(`/admin/api/expenses/${id}`, { method: 'DELETE' });
+      showToast('تم الحذف ✓', 'success');
+      loadExpenses();
+    }
+  </script>
+</body>
+</html>

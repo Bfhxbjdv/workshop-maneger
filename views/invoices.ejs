@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>الفواتير - نظام إدارة الورشة</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-dark bg-danger">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/"><i class="bi bi-receipt"></i> إدارة الفواتير</a>
+      <div>
+        <a href="/" class="btn btn-outline-light btn-sm">الرئيسية</a>
+        <a href="/logout" class="btn btn-outline-light btn-sm">خروج</a>
+      </div>
+    </div>
+  </nav>
+  <div class="container-fluid mt-3">
+    <div class="row mb-3">
+      <div class="col-md-6">
+        <input type="text" id="searchInput" class="form-control" placeholder="بحث باسم العميل..." oninput="loadInvoices()">
+      </div>
+      <div class="col-md-2">
+        <select id="statusFilter" class="form-select" onchange="loadInvoices()">
+          <option value="">كل الحالات</option>
+          <option value="مدفوعة">مدفوعة</option>
+          <option value="غير مدفوعة">غير مدفوعة</option>
+          <option value="ملغية">ملغية</option>
+        </select>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead><tr><th>#</th><th>رقم الفاتورة</th><th>العميل</th><th>الماكينة</th><th>المبلغ</th><th>الحالة</th><th>التاريخ</th><th>خيارات</th></tr></thead>
+            <tbody id="invoicesTableBody"></tbody>
+          </table>
+        </div>
+        <nav><ul class="pagination justify-content-center" id="pagination"></ul></nav>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/main.js"></script>
+  <script>loadInvoices();</script>
+</body>
+</html>

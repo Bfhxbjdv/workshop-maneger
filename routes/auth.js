@@ -18,6 +18,7 @@ router.post('/login', (req, res) => {
   req.session.username = user.Username;
   req.session.role = user.Role;
   req.session.name = user.Name;
+  req.session.permissions = user.Permissions;
   res.redirect('/');
 });
 
@@ -28,12 +29,18 @@ router.get('/logout', (req, res) => {
 
 router.get('/me', (req, res) => {
   if (!req.session.userId) return res.json({ user: null });
+  const user = db.get("SELECT Permissions FROM Users WHERE User_ID=?", [req.session.userId]);
+  let permissions = {};
+  try {
+    permissions = user ? JSON.parse(user.Permissions || '{}') : {};
+  } catch {}
   res.json({
     user: {
       id: req.session.userId,
       name: req.session.name,
       username: req.session.username,
-      role: req.session.role
+      role: req.session.role,
+      permissions: permissions
     }
   });
 });

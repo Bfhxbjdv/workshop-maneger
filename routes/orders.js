@@ -3,7 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const db = require('../database/connection');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 
@@ -68,7 +68,7 @@ router.get('/', requireAuth(), (req, res) => {
   res.json({ orders: enriched, total: countRow.total, page, pages: Math.ceil(countRow.total / limit) });
 });
 
-router.post('/', requireAuth(['Admin', 'Designer']), (req, res) => {
+router.post('/', requirePermission('orders'), (req, res) => {
   const { Client_ID, Machine_Type, Materials, Notes } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
 
@@ -128,6 +128,7 @@ router.put('/:id', requireAuth(), (req, res) => {
     if (totalCost > 0) {
       db.run("UPDATE Clients SET Total_Spent = Total_Spent + ? WHERE Client_ID=?", [totalCost, oldOrder.Client_ID]);
     }
+    db.run("UPDATE Orders SET Cost=?, Profit=COALESCE(Price,0)-? WHERE Task_ID=?", [totalCost, totalCost, req.params.id]);
   }
 
   if (Status === 'جاهز للقص') {
@@ -167,6 +168,7 @@ router.put('/:id/status', requireAuth(), (req, res) => {
     if (totalCost > 0) {
       db.run("UPDATE Clients SET Total_Spent = Total_Spent + ? WHERE Client_ID=?", [totalCost, oldOrder.Client_ID]);
     }
+    db.run("UPDATE Orders SET Cost=?, Profit=COALESCE(Price,0)-? WHERE Task_ID=?", [totalCost, totalCost, req.params.id]);
   }
 
   if (Status === 'جاهز للقص') {
@@ -192,7 +194,7 @@ router.put('/:id/status', requireAuth(), (req, res) => {
   res.json(order);
 });
 
-router.post('/:id/duplicate', requireAuth(['Admin', 'Designer']), (req, res) => {
+router.post('/:id/duplicate', requirePermission('orders'), (req, res) => {
   const old = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.id]);
   if (!old) return res.status(404).json({ error: 'الطلب غير موجود' });
 
@@ -229,7 +231,7 @@ router.post('/notifications/read', requireAuth(), (req, res) => {
   res.json({ success: true });
 });
 
-router.delete('/:id', requireAuth(['Admin', 'Designer']), (req, res) => {
+router.delete('/:id', requirePermission('orders'), (req, res) => {
   const order = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.id]);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
   if (order.File_Path) {

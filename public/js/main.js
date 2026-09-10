@@ -51,6 +51,7 @@ function loadOrders(page = 1, filter = currentFilter) {
       const showUploadBtn = o.Status === 'قيد التصميم';
       const hasFile = o.File_Path;
 
+      const isDelivered = o.Status === 'تم التسليم';
       tbody.innerHTML += `<tr>
         <td>${o.Task_ID}</td>
         <td><a href="/client/${o.Client_ID}" class="text-decoration-none">${o.Client_Name || '---'}</a></td>
@@ -70,6 +71,7 @@ function loadOrders(page = 1, filter = currentFilter) {
             <button class="btn btn-outline-info" onclick="duplicateOrder(${o.Task_ID})" title="تكرار الطلب"><i class="bi bi-copy"></i></button>
             <a href="/client/${o.Client_ID}" class="btn btn-outline-dark" title="عرض ملفات العميل"><i class="bi bi-folder"></i></a>
             ${hasFile ? `<button class="btn btn-outline-warning" onclick="deleteFile(${o.Task_ID})" title="حذف الملف"><i class="bi bi-file-x"></i></button>` : ''}
+            ${isDelivered ? `<button class="btn btn-outline-danger" onclick="createInvoiceFromOrder(${o.Task_ID})" title="إنشاء فاتورة"><i class="bi bi-receipt"></i></button>` : ''}
             <button class="btn btn-outline-danger" onclick="deleteOrder(${o.Task_ID})" title="حذف الطلب"><i class="bi bi-trash"></i></button>
           </div>
         </td>
@@ -223,7 +225,7 @@ function openUploadModal(taskId) {
       <button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.material-row').remove()"><i class="bi bi-x"></i></button>
     </div>
   </div>`;
-  loadMaterials(document.querySelector('.mat-select'));
+  loadMaterials(container.querySelector('.mat-select'));
   new bootstrap.Modal(document.getElementById('uploadModal')).show();
 }
 
@@ -244,7 +246,8 @@ function uploadDesignFile() {
   const file = document.getElementById('uploadFile').files[0];
   if (!file) { showToast('يرجى اختيار ملف', 'warning'); return; }
 
-  const materialRows = document.querySelectorAll('.material-row');
+  const container = document.getElementById('materialsContainer');
+  const materialRows = container.querySelectorAll('.material-row');
   const materials = [];
   materialRows.forEach(row => {
     const matSelect = row.querySelector('.mat-select');
@@ -258,13 +261,16 @@ function uploadDesignFile() {
   formData.append('file', file);
   formData.append('materials', JSON.stringify(materials));
 
+  showToast('جاري رفع الملف...', 'info');
   fetch(`/api/files/upload/${taskId}`, { method: 'POST', body: formData })
-    .then(r => r.json()).then(data => {
+    .then(r => r.json().then(data => ({status: r.status, data})))
+    .then(({status, data}) => {
       if (data.error) { showToast(data.error, 'danger'); return; }
+      if (status !== 200) { showToast('خطأ في السيرفر: ' + (data.error || status), 'danger'); return; }
       showToast('✅ تم رفع الملف مع تحديد المواد المستهلكة', 'success');
       bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
       loadOrders();
-    }).catch(e => showToast('فشل رفع الملف', 'danger'));
+    }).catch(e => showToast('فشل رفع الملف - تأكد من اتصال السيرفر: ' + e.message, 'danger'));
 }
 
 // ============== DUPLICATE ORDER ==============
@@ -416,28 +422,74 @@ async function loadStats() {
 
 // ============== CLIENTS PAGE ==============
 async function loadClients(page = 1) {
-  const search = document.getElementById('searchClient')?.value || '';
-  const data = await fetch(`/api/clients?page=${page}&search=${encodeURIComponent(search)}`).then(r => r.json());
-  const tbody = document.getElementById('clientsTableBody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
-  if (!data.clients || data.clients.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center">لا يوجد عملاء</td></tr>';
-    return;
+  try {
+    const search = document.getElementById('searchClient')?.value || '';
+    const res = await fetch(`/api/clients?page=${page}&search=${encodeURIComponent(search)}`);
+    if (!res.ok) { showToast('فشل تحميل العملاء', 'danger'); return; }
+    const data = await res.json();
+    const tbody = document.getElementById('clientsTableBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!data.clients || data.clients.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center">لا يوجد عملاء</td></tr>';
+      renderPagination('clientsPagination', 1, 1);
+      return;
+    }
+    data.clients.forEach(c => {
+      const stars = '★'.repeat(c.Rating || 3) + '☆'.repeat(5 - (c.Rating || 3));
+      tbody.innerHTML += `<tr>
+        <td>${c.Client_ID}</td><td>${c.Full_Name}</td><td>${c.Phone_Number || '-'}</td>
+        <td class="text-warning">${stars}</td><td>${c.Total_Spent || 0}</td><td>${c.Notes || '-'}</td>
+        <td><a href="/client/${c.Client_ID}" class="btn btn-sm btn-outline-info"><i class="bi bi-folder"></i> عرض</a></td>
+        <td>
+          <button class="btn btn-sm btn-outline-primary" onclick="editClient(${c.Client_ID})" title="تعديل"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteClient(${c.Client_ID})" title="حذف"><i class="bi bi-trash"></i></button>
+        </td>
+      </tr>`;
+    });
+    renderPagination('clientsPagination', data.page, data.pages);
+  } catch (e) {
+    showToast('خطأ في تحميل العملاء: ' + e.message, 'danger');
   }
-  data.clients.forEach(c => {
-    const stars = '★'.repeat(c.Rating || 3) + '☆'.repeat(5 - (c.Rating || 3));
-    tbody.innerHTML += `<tr>
-      <td>${c.Client_ID}</td><td>${c.Full_Name}</td><td>${c.Phone_Number || '-'}</td>
-      <td class="text-warning">${stars}</td><td>${c.Total_Spent || 0}</td><td>${c.Notes || '-'}</td>
-      <td><a href="/client/${c.Client_ID}" class="btn btn-sm btn-outline-info"><i class="bi bi-folder"></i> عرض</a></td>
-      <td><button class="btn btn-sm btn-outline-primary" onclick="editClient(${c.Client_ID})"><i class="bi bi-pencil"></i></button></td>
-    </tr>`;
-  });
-  renderPagination('clientsPagination', data.page, data.pages);
 }
 
-function editClient(id) { showToast('جاري تحميل البيانات...', 'info'); }
+async function resetClientForm() {
+  document.getElementById('editClientId').value = '';
+  document.getElementById('clientName').value = '';
+  document.getElementById('clientPhone').value = '';
+  document.getElementById('clientRating').value = '3';
+  document.getElementById('clientNotes').value = '';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const m = document.getElementById('clientModal');
+  if (m) m.addEventListener('hidden.bs.modal', resetClientForm);
+});
+
+async function editClient(id) {
+  try {
+    const res = await fetch(`/api/clients/${id}`);
+    const data = await res.json();
+    if (data.error) { showToast(data.error, 'danger'); return; }
+    document.getElementById('editClientId').value = data.Client_ID;
+    document.getElementById('clientName').value = data.Full_Name || '';
+    document.getElementById('clientPhone').value = data.Phone_Number || '';
+    document.getElementById('clientRating').value = data.Rating || 3;
+    document.getElementById('clientNotes').value = data.Notes || '';
+    new bootstrap.Modal(document.getElementById('clientModal')).show();
+  } catch (e) {
+    showToast('فشل تحميل بيانات العميل: ' + e.message, 'danger');
+  }
+}
+
+function deleteClient(id) {
+  if (!confirm('هل أنت متأكد من حذف هذا العميل بالكامل؟\nسيتم حذف جميع طلباته وملفاته ولن يمكن التراجع.')) return;
+  fetch(`/api/clients/${id}`, { method: 'DELETE' }).then(r => r.json()).then(d => {
+    if (d.error) { showToast(d.error, 'danger'); return; }
+    showToast('✅ تم حذف العميل', 'success');
+    loadClients();
+  });
+}
 
 function saveClient() {
   const id = document.getElementById('editClientId').value;
@@ -523,22 +575,119 @@ async function loadUsers() {
   const data = await fetch('/api/users').then(r => r.json());
   const tbody = document.getElementById('usersTableBody');
   if (!tbody) return;
-  const roles = { 'Admin': 'مدير', 'Designer': 'مصمم', 'Laser_Op': 'عامل ليزر', 'Router_Op': 'عامل راوتر' };
-  tbody.innerHTML = data.map(u => `<tr><td>${u.User_ID}</td><td>${u.Name}</td><td>${u.Username}</td><td><span class="badge bg-dark">${roles[u.Role] || u.Role}</span></td><td>${u.Created_At || ''}</td><td><button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${u.User_ID})"><i class="bi bi-trash"></i></button></td></tr>`).join('');
+  const roles = { 'Admin': 'مدير', 'Designer': 'مصمم', 'Laser_Op': 'عامل ليزر', 'Router_Op': 'عامل راوتر', 'Custom': 'مخصص' };
+  const permNames = {
+    dashboard: 'لوحة التحكم', clients: 'العملاء', orders: 'الطلبات',
+    inventory: 'المخزون', invoices: 'الفواتير', expenses: 'المصروفات',
+    admin: 'لوحة المدير', users: 'المستخدمين'
+  };
+  tbody.innerHTML = data.map(u => {
+    let permsHtml = '-';
+    if (u.Role === 'Custom' && u.Permissions) {
+      try {
+        const perms = JSON.parse(u.Permissions);
+        const activePerms = Object.entries(perms).filter(([k, v]) => v).map(([k]) => permNames[k] || k);
+        permsHtml = activePerms.length > 0
+          ? activePerms.map(p => `<span class="badge bg-info me-1">${p}</span>`).join('')
+          : '<span class="text-muted">لا توجد صلاحيات</span>';
+      } catch {}
+    }
+    return `<tr>
+      <td>${u.User_ID}</td>
+      <td>${u.Name}</td>
+      <td>${u.Username}</td>
+      <td><span class="badge bg-dark">${roles[u.Role] || u.Role}</span></td>
+      <td>${permsHtml}</td>
+      <td>${u.Created_At || ''}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary" onclick="editUser(${u.User_ID})" title="تعديل"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${u.User_ID})" title="حذف"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`;
+  }).join('');
 }
 
 function saveUser() {
   const id = document.getElementById('editUserId').value;
-  const data = { Name: document.getElementById('userName').value, Username: document.getElementById('userUsername').value, Password: document.getElementById('userPassword').value, Role: document.getElementById('userRole').value };
+  const role = document.getElementById('userRole').value;
+  const data = {
+    Name: document.getElementById('userName').value,
+    Username: document.getElementById('userUsername').value,
+    Password: document.getElementById('userPassword').value,
+    Role: role,
+    Permissions: role === 'Custom' ? getPermissions() : {}
+  };
   const method = id ? 'PUT' : 'POST';
   const url = id ? `/api/users/${id}` : '/api/users';
   fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-    .then(r => r.json()).then(d => { if (d.error) { showToast(d.error, 'danger'); return; } showToast('تم الحفظ', 'success'); bootstrap.Modal.getInstance(document.getElementById('userModal')).hide(); loadUsers(); });
+    .then(r => r.json()).then(d => {
+      if (d.error) { showToast(d.error, 'danger'); return; }
+      showToast('تم الحفظ بنجاح', 'success');
+      bootstrap.Modal.getInstance(document.getElementById('userModal')).hide();
+      loadUsers();
+    });
 }
 
 function deleteUser(id) {
   if (!confirm('هل أنت متأكد من حذف هذا المستخدم؟')) return;
-  fetch(`/api/users/${id}`, { method: 'DELETE' }).then(r => r.json()).then(d => { if (d.error) { showToast(d.error, 'danger'); return; } showToast('تم الحذف', 'success'); loadUsers(); });
+  fetch(`/api/users/${id}`, { method: 'DELETE' }).then(r => r.json()).then(d => {
+    if (d.error) { showToast(d.error, 'danger'); return; }
+    showToast('تم الحذف بنجاح', 'success');
+    loadUsers();
+  });
+}
+
+// ============== INVOICES ==============
+async function loadInvoices(page = 1) {
+  const search = document.getElementById('searchInput')?.value || '';
+  const status = document.getElementById('statusFilter')?.value || '';
+  let url = `/api/invoices?page=${page}`;
+  if (search) url += `&search=${encodeURIComponent(search)}`;
+  if (status) url += `&status=${encodeURIComponent(status)}`;
+  const data = await fetch(url).then(r => r.json());
+  const tbody = document.getElementById('invoicesTableBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  if (!data.invoices || data.invoices.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center">لا توجد فواتير</td></tr>';
+    renderPagination('pagination', 1, 1);
+    return;
+  }
+  data.invoices.forEach(inv => {
+    const statusColors = { 'مدفوعة': 'success', 'غير مدفوعة': 'warning', 'ملغية': 'secondary' };
+    const sc = statusColors[inv.Status] || 'secondary';
+    tbody.innerHTML += `<tr>
+      <td>${inv.Invoice_ID}</td>
+      <td><a href="/api/invoices/${inv.Invoice_ID}/view" target="_blank" class="text-decoration-none">${inv.Invoice_Number}</a></td>
+      <td>${inv.Client_Name || '-'}</td>
+      <td>${inv.Machine_Type || '-'}</td>
+      <td>${parseFloat(inv.Amount).toFixed(2)} SYP</td>
+      <td><span class="badge bg-${sc}">${inv.Status}</span></td>
+      <td>${inv.Created_At || ''}</td>
+      <td>
+        <a href="/api/invoices/${inv.Invoice_ID}/view" target="_blank" class="btn btn-sm btn-outline-info" title="عرض"><i class="bi bi-eye"></i></a>
+        <a href="/api/invoices/${inv.Invoice_ID}/pdf" class="btn btn-sm btn-outline-primary" title="تحميل PDF"><i class="bi bi-download"></i></a>
+      </td>
+    </tr>`;
+  });
+  renderPagination('pagination', page, data.pages || 1);
+}
+
+async function createInvoiceFromOrder(taskId) {
+  const amount = prompt('أدخل المبلغ الإجمالي للفاتورة:');
+  if (!amount || isNaN(parseFloat(amount))) { showToast('يرجى إدخال مبلغ صحيح', 'danger'); return; }
+  try {
+    const r = await fetch('/api/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Order_Task_ID: taskId, Amount: parseFloat(amount) })
+    });
+    const d = await r.json();
+    if (d.error) { showToast(d.error, 'danger'); return; }
+    showToast(`تم إنشاء الفاتورة #${d.Invoice_Number}`, 'success');
+    if (document.getElementById('ordersTableBody')) loadOrders();
+    if (document.getElementById('invoicesTableBody')) loadInvoices();
+  } catch(e) { showToast('خطأ في إنشاء الفاتورة', 'danger'); }
 }
 
 // ============== UTILITIES ==============

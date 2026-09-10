@@ -1,14 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/connection');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 
 router.get('/', requireAuth(), (req, res) => {
   const materials = db.all("SELECT * FROM Inventory ORDER BY Material_Name ASC");
   res.json(materials);
 });
 
-router.post('/', requireAuth(['Admin', 'Designer']), (req, res) => {
+router.post('/', requirePermission('inventory'), (req, res) => {
   const { Material_Name, Thickness, Quantity, Cost_Per_Unit } = req.body;
   if (!Material_Name) return res.status(400).json({ error: 'اسم المادة مطلوب' });
   db.run(
@@ -18,7 +18,7 @@ router.post('/', requireAuth(['Admin', 'Designer']), (req, res) => {
   res.json({ success: true });
 });
 
-router.put('/:id', requireAuth(['Admin', 'Designer']), (req, res) => {
+router.put('/:id', requirePermission('inventory'), (req, res) => {
   const { Material_Name, Thickness, Quantity, Cost_Per_Unit } = req.body;
   db.run(
     "UPDATE Inventory SET Material_Name=?, Thickness=?, Quantity=?, Cost_Per_Unit=? WHERE Material_ID=?",

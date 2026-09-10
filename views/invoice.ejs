@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>فاتورة <%= invoice.Invoice_Number %> - Kazanji Group</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    @media print { .no-print { display: none !important; } body { background: #fff; } }
+    .invoice-box { max-width: 800px; margin: 20px auto; background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+    .invoice-header { border-bottom: 2px solid #dc3545; padding-bottom: 20px; margin-bottom: 20px; }
+    .invoice-title { color: #dc3545; font-weight: 700; }
+    .company-name { font-size: 24px; font-weight: 700; color: #333; }
+    .invoice-table th { background: #f8f9fa; }
+    .total-row { font-size: 18px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="no-print text-center mt-3">
+    <button class="btn btn-danger" onclick="window.print()"><i class="bi bi-printer"></i> طباعة / PDF</button>
+    <a href="/api/invoices/<%= invoice.Invoice_ID %>/pdf" class="btn btn-primary"><i class="bi bi-download"></i> تحميل PDF</a>
+    <a href="/" class="btn btn-secondary"><i class="bi bi-arrow-right"></i> العودة</a>
+  </div>
+
+  <div class="invoice-box" id="invoiceContent">
+    <div class="invoice-header">
+      <div class="row">
+        <div class="col-6">
+          <div class="company-name">Kazanji Group</div>
+          <div class="text-muted small">شركة كازانجي للمقاولات</div>
+          <div class="text-muted small">Design & Cutting Services</div>
+          <div class="text-muted small">Tel: +963 933 123 456</div>
+        </div>
+        <div class="col-6 text-start">
+          <h1 class="invoice-title">فاتورة</h1>
+          <div class="text-muted small"><strong>رقم:</strong> <%= invoice.Invoice_Number %></div>
+          <div class="text-muted small"><strong>التاريخ:</strong> <%= new Date(invoice.Created_At).toLocaleDateString('ar-EG') %></div>
+          <div class="text-muted small">
+            <strong>الحالة:</strong>
+            <span class="badge bg-<%= invoice.Status === 'مدفوعة' ? 'success' : invoice.Status === 'ملغية' ? 'secondary' : 'warning' %>">
+              <%= invoice.Status %>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mb-4">
+      <div class="col-6">
+        <strong>العميل:</strong> <%= invoice.Client_Name %><br>
+        <strong>الهاتف:</strong> <%= invoice.Phone_Number || 'N/A' %><br>
+      </div>
+      <div class="col-6 text-start">
+        <strong>رقم الطلب:</strong> #<%= invoice.Order_Task_ID %><br>
+        <strong>الماكينة:</strong> <%= invoice.Machine_Type %><br>
+      </div>
+    </div>
+
+    <table class="table table-bordered invoice-table">
+      <thead>
+        <tr><th>#</th><th>البيان</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr>
+      </thead>
+      <tbody>
+        <% if (materials && materials.length > 0) { %>
+          <% materials.forEach((m, i) => { %>
+            <tr>
+              <td><%= i + 1 %></td>
+              <td><%= m.Material_Name || 'خدمات تصميم وقص' %><%= m.Thickness ? ' (' + m.Thickness + ')' : '' %></td>
+              <td><%= m.Quantity || 1 %></td>
+              <td><%= (m.Cost_Per_Unit || invoice.Amount).toFixed(2) %> SYP</td>
+              <td><%= ((m.Quantity || 1) * (m.Cost_Per_Unit || invoice.Amount)).toFixed(2) %> SYP</td>
+            </tr>
+          <% }); %>
+        <% } else { %>
+          <tr>
+            <td>1</td>
+            <td>خدمات تصميم وقص</td>
+            <td>1</td>
+            <td><%= invoice.Amount.toFixed(2) %> SYP</td>
+            <td><%= invoice.Amount.toFixed(2) %> SYP</td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+
+    <div class="row mt-3">
+      <div class="col-6">
+        <p class="text-muted small mb-0"><strong>طريقة الدفع:</strong> <%= invoice.Payment_Method %></p>
+        <% if (invoice.Notes) { %><p class="text-muted small mb-0"><strong>ملاحظات:</strong> <%= invoice.Notes %></p><% } %>
+        <p class="text-muted small mb-0"><strong>ملاحظات الطلب:</strong> <%= invoice.Order_Notes || 'لا يوجد' %></p>
+      </div>
+      <div class="col-6 text-start">
+        <table class="table table-borderless">
+          <tr><td>المبلغ الإجمالي:</td><td class="total-row"><%= invoice.Amount.toFixed(2) %> SYP</td></tr>
+          <tr><td>المدفوع:</td><td class="total-row"><%= (invoice.Amount_Paid || invoice.Amount).toFixed(2) %> SYP</td></tr>
+          <% const remaining = invoice.Amount - (invoice.Amount_Paid || invoice.Amount); if (remaining > 0) { %>
+          <tr><td>المتبقي:</td><td class="total-row text-danger"><%= remaining.toFixed(2) %> SYP</td></tr>
+          <% } %>
+        </table>
+      </div>
+    </div>
+
+    <div class="text-center mt-4 pt-3 border-top">
+      <p class="text-muted small mb-0">شكراً لتعاملكم معنا</p>
+      <p class="text-muted small mb-0">Kazanji Group - فاتورة إلكترونية</p>
+    </div>
+  </div>
+</body>
+</html>

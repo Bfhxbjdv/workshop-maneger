@@ -1,15 +1,14 @@
 services:
   - type: web
     name: workshop-manager
-    env: node
+    runtime: node
+    plan: free
     buildCommand: npm install
     startCommand: node server.js
+    healthCheckPath: /login
+    autoDeploy: true
     envVars:
       - key: NODE_VERSION
         value: 18
       - key: SESSION_SECRET
         generateValue: true
-      - key: GOOGLE_DRIVE_KEY_JSON
-        sync: false
-      - key: GOOGLE_DRIVE_FOLDER_ID
-        sync: false
