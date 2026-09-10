@@ -61,10 +61,14 @@ function loadOrders(page = 1, filter = currentFilter) {
         <td><span class="badge bg-${sc}">${o.Status}</span></td>
         <td>${showUploadBtn
           ? `<button class="btn btn-sm btn-outline-primary" onclick="openUploadModal(${o.Task_ID})"><i class="bi bi-upload"></i></button>`
-          : hasFile ? `<span class="badge bg-success"><i class="bi bi-check"></i></span>` : '-'}</td>
-        <td>${hasFile
-          ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-outline-primary"><i class="bi bi-download"></i></a>`
-          : `<span class="text-muted">-</span>`}</td>
+          : hasFile ? `<span class="badge bg-success"><i class="bi bi-check"></i>${o.File_Count > 0 ? ` ${o.File_Count}` : ''}</span>` : '-'}</td>
+        <td>
+          <div class="d-flex align-items-center gap-1">
+            ${hasFile
+              ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-outline-primary" title="تحميل كل الملفات (${o.File_Count || 1})"><i class="bi bi-download"></i></a>`
+              : `<span class="text-muted">-</span>`}
+          </div>
+        </td>
         <td>
           <div class="btn-group btn-group-sm">
             <button class="btn btn-outline-secondary" onclick="openUpdateModal(${o.Task_ID},'${o.Status}')" title="تحديث الحالة"><i class="bi bi-pencil"></i></button>
@@ -210,6 +214,8 @@ function openUploadModal(taskId) {
   document.getElementById('uploadTaskId').value = taskId;
   document.getElementById('uploadFile').value = '';
   document.getElementById('uploadNotes').value = '';
+  const fileCountText = document.getElementById('fileCountText');
+  if (fileCountText) fileCountText.textContent = '';
   const container = document.getElementById('materialsContainer');
   container.innerHTML = `<div class="row mb-2 material-row">
     <div class="col-md-5">
@@ -226,7 +232,32 @@ function openUploadModal(taskId) {
     </div>
   </div>`;
   loadMaterials(container.querySelector('.mat-select'));
+  loadExistingFiles(taskId);
   new bootstrap.Modal(document.getElementById('uploadModal')).show();
+}
+
+function loadExistingFiles(taskId) {
+  fetch(`/api/files/list/${taskId}`).then(r => r.json()).then(files => {
+    if (!Array.isArray(files) || files.length === 0) return;
+    const container = document.getElementById('existingFilesContainer');
+    if (!container) return;
+    const wrap = document.getElementById('existingFilesWrap');
+    if (wrap) wrap.style.display = 'block';
+    container.innerHTML = files.map(f => `
+      <li class="list-group-item d-flex justify-content-between align-items-center py-1">
+        <small><i class="bi bi-file-earmark"></i> ${f.Original_Name}</small>
+        <a href="/api/files/download-file/${f.File_ID}" class="btn btn-xs btn-outline-primary py-0" title="تحميل"><i class="bi bi-download"></i></a>
+      </li>
+    `).join('');
+    container.style.display = 'block';
+  }).catch(() => {});
+}
+
+function onUploadFileChange(input) {
+  const txt = document.getElementById('fileCountText');
+  if (txt && input.files) {
+    txt.textContent = input.files.length > 0 ? `✅ تم اختيار ${input.files.length} ملف(ات) - سيتم رفعها جميعاً معاً` : '';
+  }
 }
 
 function addMaterialRow() {
@@ -243,8 +274,9 @@ function addMaterialRow() {
 
 function uploadDesignFile() {
   const taskId = document.getElementById('uploadTaskId').value;
-  const file = document.getElementById('uploadFile').files[0];
-  if (!file) { showToast('يرجى اختيار ملف', 'warning'); return; }
+  const fileInput = document.getElementById('uploadFile');
+  const files = fileInput.files;
+  if (!files || files.length === 0) { showToast('يرجى اختيار ملف واحد على الأقل', 'warning'); return; }
 
   const container = document.getElementById('materialsContainer');
   const materialRows = container.querySelectorAll('.material-row');
@@ -257,20 +289,32 @@ function uploadDesignFile() {
     }
   });
 
+  const btn = event?.target || document.querySelector('#uploadModal .btn-primary');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جاري الرفع...'; }
+
   const formData = new FormData();
-  formData.append('file', file);
+  for (let i = 0; i < files.length; i++) {
+    formData.append('files', files[i]);
+  }
   formData.append('materials', JSON.stringify(materials));
 
-  showToast('جاري رفع الملف...', 'info');
+  showToast(`جاري رفع ${files.length} ملف...`, 'info');
   fetch(`/api/files/upload/${taskId}`, { method: 'POST', body: formData })
     .then(r => r.json().then(data => ({status: r.status, data})))
     .then(({status, data}) => {
       if (data.error) { showToast(data.error, 'danger'); return; }
       if (status !== 200) { showToast('خطأ في السيرفر: ' + (data.error || status), 'danger'); return; }
-      showToast('✅ تم رفع الملف مع تحديد المواد المستهلكة', 'success');
+      const count = data.count || files.length;
+      showToast(`✅ تم رفع ${count} ملف بنجاح`, 'success');
       bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
       loadOrders();
-    }).catch(e => showToast('فشل رفع الملف - تأكد من اتصال السيرفر: ' + e.message, 'danger'));
+    }).catch(e => showToast('فشل رفع الملفات - تأكد من اتصال السيرفر: ' + e.message, 'danger'))
+    .finally(() => {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد'; }
+      fileInput.value = '';
+      const txt = document.getElementById('fileCountText');
+      if (txt) txt.textContent = '';
+    });
 }
 
 // ============== DUPLICATE ORDER ==============

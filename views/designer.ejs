@@ -147,12 +147,17 @@
   <div class="modal fade" id="uploadModal">
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
-        <div class="modal-header bg-primary text-white"><h5><i class="bi bi-upload"></i> رفع ملف التصميم مع تحديد المواد المستهلكة</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <div class="modal-header bg-primary text-white"><h5><i class="bi bi-upload"></i> رفع ملفات التصميم مع تحديد المواد المستهلكة</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
         <div class="modal-body">
           <input type="hidden" id="uploadTaskId">
           <div class="mb-3">
-            <label class="form-label">ملف التصميم (DXF, CDR, AI, EPS, SVG, PDF, PLT)</label>
-            <input type="file" id="uploadFile" class="form-control">
+            <label class="form-label"><i class="bi bi-files"></i> ملفات التصميم (DXF, CDR, AI, EPS, SVG, PDF, PLT) - يمكن اختيار عدة ملفات</label>
+            <input type="file" id="uploadFile" class="form-control" multiple onchange="onUploadFileChange(this)">
+            <div class="form-text text-muted mt-1" id="fileCountText"></div>
+          </div>
+          <div class="mb-3" id="existingFilesWrap" style="display:none">
+            <label class="form-label text-muted"><i class="bi bi-folder2-open"></i> الملفات الموجودة لهذا الطلب</label>
+            <ul class="list-group" id="existingFilesContainer" style="display:none"></ul>
           </div>
           <div class="card bg-light mb-3">
             <div class="card-header d-flex justify-content-between">
@@ -187,7 +192,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-primary" onclick="uploadDesignFile()"><i class="bi bi-cloud-upload"></i> رفع الملف مع المواد</button>
+          <button class="btn btn-primary" onclick="uploadDesignFile()"><i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد</button>
         </div>
       </div>
     </div>

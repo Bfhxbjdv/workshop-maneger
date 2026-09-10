@@ -42,6 +42,7 @@ router.get('/', requireAuth(), (req, res) => {
   const orders = db.all(`
     SELECT o.*, c.Full_Name as Client_Name, c.Phone_Number,
            i.Material_Name, i.Thickness,
+      (SELECT COUNT(*) FROM Order_Files f WHERE f.Task_ID=o.Task_ID) as File_Count,
       (SELECT GROUP_CONCAT(om.Material_ID || ':' || om.Quantity, '|') FROM Order_Materials om WHERE om.Task_ID=o.Task_ID) as Materials_Data
     FROM Orders o
     LEFT JOIN Clients c ON o.Client_ID = c.Client_ID

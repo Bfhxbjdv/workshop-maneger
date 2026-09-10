@@ -100,6 +100,20 @@ async function initDatabase() {
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS Order_Files (
+      File_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Task_ID INTEGER NOT NULL,
+      Original_Name TEXT NOT NULL,
+      Stored_Name TEXT NOT NULL,
+      File_Path TEXT NOT NULL,
+      GDrive_File_ID TEXT,
+      File_Size REAL DEFAULT 0,
+      Uploaded_By INTEGER,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (Task_ID) REFERENCES Orders(Task_ID) ON DELETE CASCADE,
+      FOREIGN KEY (Uploaded_By) REFERENCES Users(User_ID)
+    );
+
     CREATE TABLE IF NOT EXISTS Upload_Queue (
       Queue_ID INTEGER PRIMARY KEY AUTOINCREMENT,
       Task_ID INTEGER NOT NULL,
@@ -138,6 +152,23 @@ async function initDatabase() {
 
   try {
     db.exec("ALTER TABLE Users ADD COLUMN Created_At DATETIME DEFAULT CURRENT_TIMESTAMP");
+  } catch (e) {}
+
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS Order_Files (
+      File_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Task_ID INTEGER NOT NULL,
+      Original_Name TEXT NOT NULL,
+      Stored_Name TEXT NOT NULL,
+      File_Path TEXT NOT NULL,
+      GDrive_File_ID TEXT,
+      File_Size REAL DEFAULT 0,
+      Uploaded_By INTEGER,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (Task_ID) REFERENCES Orders(Task_ID) ON DELETE CASCADE,
+      FOREIGN KEY (Uploaded_By) REFERENCES Users(User_ID)
+    )`);
+    console.log('✅ Order_Files table ready');
   } catch (e) {}
 
   try {
