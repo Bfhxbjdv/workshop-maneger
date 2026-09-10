@@ -15,6 +15,14 @@ function getOAuthClient() {
 }
 
 function getStoredTokens() {
+  if (process.env.GOOGLE_DRIVE_ACCESS_TOKEN && process.env.GOOGLE_DRIVE_REFRESH_TOKEN) {
+    return {
+      access_token: process.env.GOOGLE_DRIVE_ACCESS_TOKEN,
+      refresh_token: process.env.GOOGLE_DRIVE_REFRESH_TOKEN,
+      scope: 'https://www.googleapis.com/auth/drive.file',
+      token_type: 'Bearer'
+    };
+  }
   try {
     return JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
   } catch { return null; }
@@ -111,7 +119,7 @@ async function deleteFile(fileId) {
 }
 
 function isConfigured() {
-  return !!(getStoredTokens() || (process.env.GOOGLE_DRIVE_KEY_PATH && fs.existsSync(process.env.GOOGLE_DRIVE_KEY_PATH)));
+  return !!((process.env.GOOGLE_DRIVE_ACCESS_TOKEN && process.env.GOOGLE_DRIVE_REFRESH_TOKEN) || getStoredTokens() || (process.env.GOOGLE_DRIVE_KEY_PATH && fs.existsSync(process.env.GOOGLE_DRIVE_KEY_PATH)));
 }
 
 module.exports = { uploadFile, downloadFile, deleteFile, isConfigured };
