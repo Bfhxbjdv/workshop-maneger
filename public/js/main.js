@@ -32,6 +32,10 @@ function loadOrders(page = 1, filter = currentFilter) {
   currentFilter = filter;
   let url = `/api/orders?page=${page}`;
   if (filter !== 'all') url += `&status=${encodeURIComponent(filter)}`;
+  const search = document.getElementById('orderSearchInput')?.value || '';
+  if (search) url += `&search=${encodeURIComponent(search)}`;
+  const sort = document.getElementById('sortSelect')?.value || 'newest';
+  url += `&sort=${sort}`;
   fetch(url).then(r => r.json()).then(data => {
     const tbody = document.getElementById('ordersTableBody');
     if (!tbody) return;
@@ -41,7 +45,7 @@ function loadOrders(page = 1, filter = currentFilter) {
       return;
     }
     data.orders.forEach(o => {
-      const statusColors = { 'قيد التصميم': 'warning', 'جاهز للقص': 'info', 'قيد التنفيذ': 'primary', 'تم التغليف': 'secondary', 'تم التسليم': 'success' };
+      const statusColors = { 'قيد التصميم': 'warning', 'جاهز للقص': 'info', 'قيد التنفيذ': 'primary', 'تم الانتهاء من القص': 'dark', 'تم التغليف': 'secondary', 'تم التسليم': 'success' };
       const sc = statusColors[o.Status] || 'secondary';
 
       let materialsHtml = o.Materials && o.Materials.length
@@ -50,8 +54,9 @@ function loadOrders(page = 1, filter = currentFilter) {
 
       const showUploadBtn = o.Status === 'قيد التصميم';
       const hasFile = o.File_Path;
-
       const isDelivered = o.Status === 'تم التسليم';
+      const isCutDone = o.Status === 'تم الانتهاء من القص';
+
       tbody.innerHTML += `<tr>
         <td>${o.Task_ID}</td>
         <td><a href="/client/${o.Client_ID}" class="text-decoration-none">${o.Client_Name || '---'}</a></td>
@@ -73,9 +78,12 @@ function loadOrders(page = 1, filter = currentFilter) {
           <div class="btn-group btn-group-sm">
             <button class="btn btn-outline-secondary" onclick="openUpdateModal(${o.Task_ID},'${o.Status}')" title="تحديث الحالة"><i class="bi bi-pencil"></i></button>
             <button class="btn btn-outline-info" onclick="duplicateOrder(${o.Task_ID})" title="تكرار الطلب"><i class="bi bi-copy"></i></button>
+            <button class="btn btn-outline-info" onclick="openRestoreFromOrder(${o.Task_ID})" title="استرجاع ملفات من طلب قديم"><i class="bi bi-arrow-counterclockwise"></i></button>
             <a href="/client/${o.Client_ID}" class="btn btn-outline-dark" title="عرض ملفات العميل"><i class="bi bi-folder"></i></a>
             ${hasFile ? `<button class="btn btn-outline-warning" onclick="deleteFile(${o.Task_ID})" title="حذف الملف"><i class="bi bi-file-x"></i></button>` : ''}
+            ${isCutDone ? `<button class="btn btn-sm btn-success" onclick="markDelivered(${o.Task_ID})" title="تم التسليم"><i class="bi bi-check-circle"></i> تم التسليم</button>` : ''}
             ${isDelivered ? `<button class="btn btn-outline-danger" onclick="createInvoiceFromOrder(${o.Task_ID})" title="إنشاء فاتورة"><i class="bi bi-receipt"></i></button>` : ''}
+            ${isDelivered ? `<a href="/api/orders/${o.Task_ID}/receipt/pdf" class="btn btn-outline-success btn-sm" title="فاتورة استلام"><i class="bi bi-file-earmark-pdf"></i></a>` : ''}
             <button class="btn btn-outline-danger" onclick="deleteOrder(${o.Task_ID})" title="حذف الطلب"><i class="bi bi-trash"></i></button>
           </div>
         </td>
@@ -213,9 +221,12 @@ function addOrderMaterialRow() {
 function openUploadModal(taskId) {
   document.getElementById('uploadTaskId').value = taskId;
   document.getElementById('uploadFile').value = '';
+  document.getElementById('uploadImage').value = '';
   document.getElementById('uploadNotes').value = '';
   const fileCountText = document.getElementById('fileCountText');
   if (fileCountText) fileCountText.textContent = '';
+  const labelsContainer = document.getElementById('fileLabelsContainer');
+  if (labelsContainer) { labelsContainer.style.display = 'none'; labelsContainer.innerHTML = ''; }
   const container = document.getElementById('materialsContainer');
   container.innerHTML = `<div class="row mb-2 material-row">
     <div class="col-md-5">
@@ -239,25 +250,66 @@ function openUploadModal(taskId) {
 function loadExistingFiles(taskId) {
   fetch(`/api/files/list/${taskId}`).then(r => r.json()).then(files => {
     if (!Array.isArray(files) || files.length === 0) return;
+    const designFiles = files.filter(f => f.File_Type !== 'image');
+    const imageFiles = files.filter(f => f.File_Type === 'image');
+
     const container = document.getElementById('existingFilesContainer');
-    if (!container) return;
-    const wrap = document.getElementById('existingFilesWrap');
-    if (wrap) wrap.style.display = 'block';
-    container.innerHTML = files.map(f => `
-      <li class="list-group-item d-flex justify-content-between align-items-center py-1">
-        <small><i class="bi bi-file-earmark"></i> ${f.Original_Name}</small>
-        <a href="/api/files/download-file/${f.File_ID}" class="btn btn-xs btn-outline-primary py-0" title="تحميل"><i class="bi bi-download"></i></a>
-      </li>
-    `).join('');
-    container.style.display = 'block';
+    const fileWrap = document.getElementById('existingFilesWrap');
+    if (container && designFiles.length > 0) {
+      if (fileWrap) fileWrap.style.display = 'block';
+      container.innerHTML = designFiles.map(f => `
+        <li class="list-group-item d-flex justify-content-between align-items-center py-1">
+          <small><i class="bi bi-file-earmark"></i> ${f.Label ? `<strong>${f.Label}</strong> - ` : ''}${f.Original_Name}</small>
+          <div>
+            <a href="/api/files/download-file/${f.File_ID}" class="btn btn-xs btn-outline-primary py-0 me-1" title="تحميل"><i class="bi bi-download"></i></a>
+            <button class="btn btn-xs btn-outline-danger py-0" onclick="deleteFileById(${f.File_ID})" title="حذف"><i class="bi bi-trash"></i></button>
+          </div>
+        </li>
+      `).join('');
+      container.style.display = 'block';
+    }
+
+    const imgWrap = document.getElementById('existingImagesWrap');
+    if (imgWrap && imageFiles.length > 0) {
+      imgWrap.style.display = 'flex';
+      imgWrap.innerHTML = imageFiles.map(f => `
+        <div class="position-relative" style="width:80px;height:80px">
+          <img src="/api/files/image/${f.File_ID}" class="img-thumbnail" style="width:80px;height:80px;object-fit:cover" alt="${f.Label || ''}">
+          <button class="btn btn-xs btn-danger position-absolute top-0 start-0 p-0" style="width:18px;height:18px;border-radius:50%" onclick="deleteFileById(${f.File_ID})">&times;</button>
+        </div>
+      `).join('');
+    }
   }).catch(() => {});
 }
 
 function onUploadFileChange(input) {
   const txt = document.getElementById('fileCountText');
-  if (txt && input.files) {
-    txt.textContent = input.files.length > 0 ? `✅ تم اختيار ${input.files.length} ملف(ات) - سيتم رفعها جميعاً معاً` : '';
+  const labelsContainer = document.getElementById('fileLabelsContainer');
+  if (!txt || !labelsContainer) return;
+  if (input.files && input.files.length > 0) {
+    txt.textContent = `✅ تم اختيار ${input.files.length} ملف(ات) - يمكنك تحديد اسم/مواصفة لكل ملف`;
+    labelsContainer.style.display = 'block';
+    labelsContainer.innerHTML = Array.from(input.files).map((f, i) => `
+      <div class="input-group input-group-sm mb-1">
+        <span class="input-group-text" style="min-width:100px"><small>${f.name.substring(0, 25)}</small></span>
+        <input type="text" class="form-control file-label-input" placeholder="اسم/مواصفة الملف (مثال: غرفة نوم 1)" data-index="${i}">
+      </div>
+    `).join('');
+  } else {
+    txt.textContent = '';
+    labelsContainer.style.display = 'none';
+    labelsContainer.innerHTML = '';
   }
+}
+
+function deleteFileById(fileId) {
+  if (!confirm('هل أنت متأكد من حذف هذا الملف؟')) return;
+  fetch(`/api/files/file/${fileId}`, { method: 'DELETE' }).then(r => r.json()).then(d => {
+    if (d.error) { showToast(d.error, 'danger'); return; }
+    showToast('تم حذف الملف', 'success');
+    const taskId = document.getElementById('uploadTaskId')?.value;
+    if (taskId) loadExistingFiles(taskId);
+  });
 }
 
 function addMaterialRow() {
@@ -275,6 +327,7 @@ function addMaterialRow() {
 function uploadDesignFile() {
   const taskId = document.getElementById('uploadTaskId').value;
   const fileInput = document.getElementById('uploadFile');
+  const imageInput = document.getElementById('uploadImage');
   const files = fileInput.files;
   if (!files || files.length === 0) { showToast('يرجى اختيار ملف واحد على الأقل', 'warning'); return; }
 
@@ -289,6 +342,9 @@ function uploadDesignFile() {
     }
   });
 
+  const labels = [];
+  document.querySelectorAll('.file-label-input').forEach(inp => labels.push(inp.value.trim()));
+
   const btn = event?.target || document.querySelector('#uploadModal .btn-primary');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جاري الرفع...'; }
 
@@ -297,6 +353,7 @@ function uploadDesignFile() {
     formData.append('files', files[i]);
   }
   formData.append('materials', JSON.stringify(materials));
+  formData.append('labels', JSON.stringify(labels));
 
   showToast(`جاري رفع ${files.length} ملف...`, 'info');
   fetch(`/api/files/upload/${taskId}`, { method: 'POST', body: formData })
@@ -306,14 +363,39 @@ function uploadDesignFile() {
       if (status !== 200) { showToast('خطأ في السيرفر: ' + (data.error || status), 'danger'); return; }
       const count = data.count || files.length;
       showToast(`✅ تم رفع ${count} ملف بنجاح`, 'success');
+
+      if (imageInput && imageInput.files && imageInput.files.length > 0) {
+        const imgFormData = new FormData();
+        for (let i = 0; i < imageInput.files.length; i++) {
+          imgFormData.append('image', imageInput.files[i]);
+        }
+        return fetch(`/api/files/upload-image/${taskId}`, { method: 'POST', body: imgFormData }).then(r => r.json());
+      }
+      return null;
+    })
+    .then(() => {
       bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
       loadOrders();
-    }).catch(e => showToast('فشل رفع الملفات - تأكد من اتصال السيرفر: ' + e.message, 'danger'))
+    })
+    .catch(e => showToast('فشل رفع الملفات - تأكد من اتصال السيرفر: ' + e.message, 'danger'))
     .finally(() => {
       if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد'; }
       fileInput.value = '';
+      if (imageInput) imageInput.value = '';
       const txt = document.getElementById('fileCountText');
       if (txt) txt.textContent = '';
+      const lc = document.getElementById('fileLabelsContainer');
+      if (lc) { lc.style.display = 'none'; lc.innerHTML = ''; }
+    });
+}
+
+function markDelivered(taskId) {
+  if (!confirm('هل تريد تسليم هذا الطلب؟')) return;
+  fetch(`/api/orders/${taskId}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Status: 'تم التسليم' }) })
+    .then(r => r.json()).then(data => {
+      if (data.error) { showToast(data.error, 'danger'); return; }
+      showToast('تم تسليم الطلب بنجاح', 'success');
+      loadOrders();
     });
 }
 
@@ -326,6 +408,120 @@ function duplicateOrder(taskId) {
       showToast(`✅ تم إنشاء طلب مكرر #${data.Task_ID}`, 'success');
       loadOrders();
     });
+}
+
+// ============== RESTORE FROM OLD ORDER ==============
+let restoreClientId = null;
+
+function openRestoreModal() {
+  document.getElementById('restoreTargetTaskId').value = '';
+  document.getElementById('restoreClientSearch').value = '';
+  document.getElementById('restoreClientSelect').style.display = 'none';
+  document.getElementById('restoreOrdersWrap').style.display = 'none';
+  document.getElementById('restoreFilesWrap').style.display = 'none';
+  document.getElementById('restoreFilesList').innerHTML = '';
+  const submitBtn = document.getElementById('restoreSubmitBtn');
+  if (submitBtn) submitBtn.disabled = true;
+  new bootstrap.Modal(document.getElementById('restoreModal')).show();
+}
+
+function openRestoreFromOrder(taskId) {
+  openRestoreModal();
+  document.getElementById('restoreTargetTaskId').value = taskId;
+}
+
+async function searchRestoreClients() {
+  const q = document.getElementById('restoreClientSearch').value.trim();
+  const select = document.getElementById('restoreClientSelect');
+  if (q.length < 1) { select.style.display = 'none'; return; }
+  const data = await fetch(`/api/clients/all?search=${encodeURIComponent(q)}`).then(r => r.json());
+  select.innerHTML = data.map(c => `<option value="${c.Client_ID}">${c.Full_Name} ${c.Phone_Number ? '- ' + c.Phone_Number : ''}</option>`).join('');
+  select.style.display = data.length ? 'block' : 'none';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const rc = document.getElementById('restoreClientSelect');
+  if (rc) {
+    rc.addEventListener('click', async function() {
+      const opt = this.options[this.selectedIndex];
+      if (!opt) return;
+      restoreClientId = parseInt(opt.value);
+      document.getElementById('restoreClientSearch').value = opt.text.split(' -')[0];
+      this.style.display = 'none';
+      const data = await fetch(`/api/orders?clientId=${restoreClientId}&limit=200`).then(r => r.json());
+      const orderSelect = document.getElementById('restoreOrderSelect');
+      const orders = (data.orders || []).filter(o => o.Status === 'تم التسليم' || o.Status === 'تم الانتهاء من القص');
+      orderSelect.innerHTML = orders.map(o => `<option value="${o.Task_ID}">#${o.Task_ID} - ${o.Machine_Type} - ${o.Created_At || ''}</option>`).join('');
+      document.getElementById('restoreOrdersWrap').style.display = orders.length ? 'block' : 'block';
+      if (orders.length) loadRestoreFiles();
+      else document.getElementById('restoreFilesWrap').style.display = 'none';
+    });
+  }
+});
+
+async function loadRestoreFiles() {
+  const taskId = document.getElementById('restoreOrderSelect').value;
+  if (!taskId) return;
+  const files = await fetch(`/api/files/list/${taskId}`).then(r => r.json());
+  const list = document.getElementById('restoreFilesList');
+  const designFiles = (files || []).filter(f => f.File_Type !== 'image');
+  list.innerHTML = (designFiles.length ? designFiles : files)
+    .map(f => `
+      <label class="list-group-item d-flex align-items-center gap-2 py-1">
+        <input type="checkbox" class="form-check-input restore-file-cb" value="${f.File_ID}">
+        <small><i class="bi bi-file-earmark"></i> ${f.Label && f.Label !== f.Original_Name ? `<strong>${f.Label}</strong> - ` : ''}${f.Original_Name}</small>
+      </label>
+    `).join('');
+  list.innerHTML += `<div class="mt-2 text-muted small"><i class="bi bi-info-circle"></i> الملفات المحددة ستُنسخ إلى الطلب الحالي في مجلد "قيد التصميم"</div>`;
+  document.getElementById('restoreFilesWrap').style.display = 'block';
+  document.querySelectorAll('.restore-file-cb').forEach(cb => cb.addEventListener('change', updateRestoreBtn));
+}
+
+function updateRestoreBtn() {
+  const count = document.querySelectorAll('.restore-file-cb:checked').length;
+  const btn = document.getElementById('restoreSubmitBtn');
+  if (btn) btn.disabled = !(count > 0);
+}
+
+async function submitRestore() {
+  const fileIds = Array.from(document.querySelectorAll('.restore-file-cb:checked')).map(cb => parseInt(cb.value));
+  if (!fileIds.length) { showToast('اختر ملفات للاسترجاع أولاً', 'warning'); return; }
+  const taskId = document.getElementById('restoreTargetTaskId').value;
+
+  if (!taskId) {
+    const clientId = restoreClientId;
+    const sourceTaskId = document.getElementById('restoreOrderSelect').value;
+    const machineType = confirm('استرجاع لطلبات الليزر؟\n\nاضغط OK لليزر (Laser)\nاضغط إلغاء للراوتر (Router)') ? 'Laser' : 'Router';
+    showToast('جاري إنشاء طلب جديد ثم استرجاع الملفات...', 'info');
+    try {
+      const res = await fetch('/api/orders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Client_ID: clientId, Machine_Type: machineType, Notes: `استرجاع من طلب #${sourceTaskId}` })
+      });
+      const order = await res.json();
+      if (order.error) { showToast(order.error, 'danger'); return; }
+      const copyRes = await fetch(`/api/files/copy/${order.Task_ID}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds })
+      });
+      const copyData = await copyRes.json();
+      if (copyData.error) { showToast(copyData.error, 'danger'); return; }
+      showToast(`✅ تم إنشاء طلب جديد #${order.Task_ID} واسترجاع ${copyData.count} ملف`, 'success');
+    } catch(e) { showToast('فشل الاسترجاع: ' + e.message, 'danger'); }
+    bootstrap.Modal.getInstance(document.getElementById('restoreModal')).hide();
+    loadOrders();
+    return;
+  }
+
+  const res = await fetch(`/api/files/copy/${taskId}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileIds })
+  });
+  const data = await res.json();
+  if (data.error) { showToast(data.error, 'danger'); return; }
+  showToast(`✅ تم استرجاع ${data.count} ملف إلى الطلب الحالي`, 'success');
+  bootstrap.Modal.getInstance(document.getElementById('restoreModal')).hide();
+  loadOrders();
 }
 
 // ============== LASER ==============
@@ -344,15 +540,24 @@ async function loadLaserOrders() {
       <td>${o.Material_Name || '-'}</td><td>${o.Thickness || '-'}</td>
       <td>${o.Notes || '-'}</td>
       <td>${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> تحميل</a>` : '-'}</td>
-      <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الإنجاز</button></td>
+      <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
     </tr>`;
   });
-  const recent = await fetch("/api/orders?status=تم التسليم&machine=Laser&page=1").then(r => r.json());
-  const recentBody = document.getElementById('recentLaserOrders');
-  if (recentBody && recent.orders) {
-    recentBody.innerHTML = recent.orders.slice(0, 5).map(o =>
-      `<tr><td>${o.Task_ID}</td><td>${o.Client_Name || ''}</td><td><span class="badge bg-success">${o.Status}</span></td><td>${o.Created_At || ''}</td></tr>`
-    ).join('');
+  await loadCutDoneForMachine('Laser', 'recentLaserOrders');
+}
+
+async function loadCutDoneForMachine(machine, targetId) {
+  const cutDone = await fetch(`/api/orders?status=تم الانتهاء من القص&machine=${machine}&page=1`).then(r => r.json());
+  const doneBody = document.getElementById(targetId);
+  if (doneBody && cutDone.orders) {
+    doneBody.innerHTML = cutDone.orders.slice(0, 10).map(o =>
+      `<tr>
+        <td>${o.Task_ID}</td><td>${o.Client_Name || ''}</td>
+        <td><span class="badge bg-dark">${o.Status}</span></td>
+        <td>${o.Created_At || ''}</td>
+        <td><button class="btn btn-sm btn-success" onclick="markDelivered(${o.Task_ID})"><i class="bi bi-check-circle"></i> تم التسليم</button></td>
+      </tr>`
+    ).join('') || '<tr><td colspan="5" class="text-center text-muted">لا توجد طلبات منتهية القص</td></tr>';
   }
 }
 
@@ -371,23 +576,18 @@ async function loadRouterOrders() {
       <td>${o.Material_Name || '-'}</td><td>${o.Thickness || '-'}</td>
       <td>${o.Notes || '-'}</td>
       <td>${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> تحميل</a>` : '-'}</td>
-      <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الإنجاز</button></td>
+      <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
     </tr>`;
   });
-  const recent = await fetch("/api/orders?status=تم التسليم&machine=Router&page=1").then(r => r.json());
-  const recentBody = document.getElementById('recentRouterOrders');
-  if (recentBody && recent.orders) {
-    recentBody.innerHTML = recent.orders.slice(0, 5).map(o =>
-      `<tr><td>${o.Task_ID}</td><td>${o.Client_Name || ''}</td><td><span class="badge bg-success">${o.Status}</span></td><td>${o.Created_At || ''}</td></tr>`
-    ).join('');
-  }
+  await loadCutDoneForMachine('Router', 'recentRouterOrders');
 }
 
 function completeOrder(taskId) {
-  fetch(`/api/orders/${taskId}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Status: 'تم التسليم' }) })
+  if (!confirm('هل تم الانتهاء من قص هذا الطلب على الماكينة؟')) return;
+  fetch(`/api/orders/${taskId}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Status: 'تم الانتهاء من القص' }) })
     .then(r => r.json()).then(data => {
       if (data.error) { showToast(data.error, 'danger'); return; }
-      showToast('تم إنجاز الطلب!', 'success');
+      showToast('✅ تم الانتهاء من القص', 'success');
       loadLaserOrders();
       loadRouterOrders();
     });
@@ -458,7 +658,7 @@ async function loadStats() {
   const chart = document.getElementById('statusChart');
   if (chart && data.statusCounts) {
     chart.innerHTML = data.statusCounts.map(s => {
-      const colors = { 'قيد التصميم': 'warning', 'جاهز للقص': 'info', 'قيد التنفيذ': 'primary', 'تم التغليف': 'secondary', 'تم التسليم': 'success' };
+      const colors = { 'قيد التصميم': 'warning', 'جاهز للقص': 'info', 'قيد التنفيذ': 'primary', 'تم الانتهاء من القص': 'dark', 'تم التغليف': 'secondary', 'تم التسليم': 'success' };
       return `<div class="d-flex justify-content-between mb-1"><span>${s.Status}</span><span class="badge bg-${colors[s.Status] || 'secondary'}">${s.cnt}</span></div>`;
     }).join('');
   }
@@ -565,7 +765,7 @@ async function loadClientDetail(clientId) {
     return;
   }
 
-  const statusColors = { 'قيد التصميم': 'warning', 'جاهز للقص': 'info', 'قيد التنفيذ': 'primary', 'تم التغليف': 'secondary', 'تم التسليم': 'success' };
+  const statusColors = { 'قيد التصميم': 'warning', 'جاهز للقص': 'info', 'قيد التنفيذ': 'primary', 'تم الانتهاء من القص': 'dark', 'تم التغليف': 'secondary', 'تم التسليم': 'success' };
 
   orders.forEach(o => {
     const sc = statusColors[o.Status] || 'secondary';
@@ -582,6 +782,7 @@ async function loadClientDetail(clientId) {
           <div class="btn-group btn-group-sm">
             ${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-outline-primary" title="تحميل"><i class="bi bi-download"></i></a>` : ''}
             <button class="btn btn-outline-info" onclick="duplicateOrder(${o.Task_ID})" title="تكرار الطلب"><i class="bi bi-copy"></i> إعادة</button>
+            <button class="btn btn-outline-secondary" onclick="openRestoreFromOrder(${o.Task_ID})" title="استرجاع ملفات لهذا الطلب"><i class="bi bi-arrow-counterclockwise"></i></button>
           </div>
         </div>
       </div>

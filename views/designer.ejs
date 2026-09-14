@@ -86,8 +86,25 @@
           <li class="nav-item"><a class="nav-link" data-status="قيد التصميم">قيد التصميم</a></li>
           <li class="nav-item"><a class="nav-link" data-status="جاهز للقص">جاهز للقص</a></li>
           <li class="nav-item"><a class="nav-link" data-status="قيد التنفيذ">قيد التنفيذ</a></li>
+          <li class="nav-item"><a class="nav-link" data-status="تم الانتهاء من القص">تم الانتهاء من القص</a></li>
           <li class="nav-item"><a class="nav-link" data-status="تم التسليم">تم التسليم</a></li>
         </ul>
+        <div class="d-flex justify-content-between align-items-center mt-2 mb-2 gap-2 flex-wrap">
+          <div class="input-group" style="max-width:250px">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="orderSearchInput" class="form-control form-control-sm" placeholder="بحث بالاسم..." oninput="loadOrders()">
+          </div>
+          <div class="d-flex gap-2">
+            <select id="sortSelect" class="form-select form-select-sm" style="width:160px" onchange="loadOrders()">
+              <option value="newest">الأحدث</option>
+              <option value="oldest">الأقدم</option>
+              <option value="status">بالحالة</option>
+              <option value="price_desc">السعر (الأعلى)</option>
+              <option value="price_asc">السعر (الأدنى)</option>
+            </select>
+            <button class="btn btn-sm btn-outline-info" onclick="openRestoreModal()"><i class="bi bi-arrow-counterclockwise"></i> استرجاع من طلب قديم</button>
+          </div>
+        </div>
         <div class="card">
           <div class="card-body">
             <div class="table-responsive">
@@ -132,6 +149,7 @@
               <option value="قيد التصميم">قيد التصميم</option>
               <option value="جاهز للقص">جاهز للقص</option>
               <option value="قيد التنفيذ">قيد التنفيذ</option>
+              <option value="تم الانتهاء من القص">تم الانتهاء من القص</option>
               <option value="تم التغليف">تم التغليف</option>
               <option value="تم التسليم">تم التسليم</option>
             </select>
@@ -154,10 +172,16 @@
             <label class="form-label"><i class="bi bi-files"></i> ملفات التصميم (DXF, CDR, AI, EPS, SVG, PDF, PLT) - يمكن اختيار عدة ملفات</label>
             <input type="file" id="uploadFile" class="form-control" multiple onchange="onUploadFileChange(this)">
             <div class="form-text text-muted mt-1" id="fileCountText"></div>
+            <div id="fileLabelsContainer" class="mt-2" style="display:none"></div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label"><i class="bi bi-image"></i> صور الطلب (اختياري)</label>
+            <input type="file" id="uploadImage" class="form-control" accept="image/*" multiple>
           </div>
           <div class="mb-3" id="existingFilesWrap" style="display:none">
             <label class="form-label text-muted"><i class="bi bi-folder2-open"></i> الملفات الموجودة لهذا الطلب</label>
             <ul class="list-group" id="existingFilesContainer" style="display:none"></ul>
+            <div id="existingImagesWrap" class="mt-2 d-flex flex-wrap gap-2" style="display:none"></div>
           </div>
           <div class="card bg-light mb-3">
             <div class="card-header d-flex justify-content-between">
@@ -193,6 +217,34 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-primary" onclick="uploadDesignFile()"><i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="restoreModal">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-info text-white"><h5><i class="bi bi-arrow-counterclockwise"></i> استرجاع ملفات من طلب قديم</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label">اختر العميل</label>
+            <input type="text" id="restoreClientSearch" class="form-control" placeholder="ابحث عن عميل..." oninput="searchRestoreClients()" autocomplete="off">
+            <select id="restoreClientSelect" class="form-select mt-1" size="5" style="display:none"></select>
+          </div>
+          <div class="mb-2" id="restoreOrdersWrap" style="display:none">
+            <label class="form-label">اختر الطلب القديم</label>
+            <select id="restoreOrderSelect" class="form-select" onchange="loadRestoreFiles()"></select>
+          </div>
+          <div class="mb-2" id="restoreFilesWrap" style="display:none">
+            <label class="form-label">اختر الملفات للاسترجاع</label>
+            <div id="restoreFilesList" class="list-group"></div>
+          </div>
+          <input type="hidden" id="restoreTargetTaskId">
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-info" id="restoreSubmitBtn" onclick="submitRestore()" disabled>استرجاع الملفات المحددة</button>
         </div>
       </div>
     </div>

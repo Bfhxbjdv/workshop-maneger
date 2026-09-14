@@ -56,5 +56,33 @@
     const clientId = <%= clientId %>;
     loadClientDetail(clientId);
   </script>
+
+  <div class="modal fade" id="restoreModal">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-info text-white"><h5><i class="bi bi-arrow-counterclockwise"></i> استرجاع ملفات من طلب قديم</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label">اختر العميل</label>
+            <input type="text" id="restoreClientSearch" class="form-control" placeholder="ابحث عن عميل..." oninput="searchRestoreClients()" autocomplete="off">
+            <select id="restoreClientSelect" class="form-select mt-1" size="5" style="display:none"></select>
+          </div>
+          <div class="mb-2" id="restoreOrdersWrap" style="display:none">
+            <label class="form-label">اختر الطلب القديم</label>
+            <select id="restoreOrderSelect" class="form-select" onchange="loadRestoreFiles()"></select>
+          </div>
+          <div class="mb-2" id="restoreFilesWrap" style="display:none">
+            <label class="form-label">اختر الملفات للاسترجاع</label>
+            <div id="restoreFilesList" class="list-group"></div>
+          </div>
+          <input type="hidden" id="restoreTargetTaskId">
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-info" id="restoreSubmitBtn" onclick="submitRestore()" disabled>استرجاع الملفات المحددة</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

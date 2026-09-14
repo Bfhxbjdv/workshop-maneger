@@ -39,7 +39,7 @@ async function initDatabase() {
       Client_ID INTEGER NOT NULL,
       Designer_ID INTEGER,
       Machine_Type TEXT NOT NULL CHECK(Machine_Type IN ('Laser','Router')),
-      Status TEXT NOT NULL DEFAULT 'قيد التصميم' CHECK(Status IN ('قيد التصميم','جاهز للقص','قيد التنفيذ','تم التغليف','تم التسليم')),
+      Status TEXT NOT NULL DEFAULT 'قيد التصميم' CHECK(Status IN ('قيد التصميم','جاهز للقص','قيد التنفيذ','تم الانتهاء من القص','تم التغليف','تم التسليم')),
       Material_ID INTEGER,
       Material_Qty REAL DEFAULT 0,
       Price REAL DEFAULT 0,
@@ -108,10 +108,24 @@ async function initDatabase() {
       File_Path TEXT NOT NULL,
       GDrive_File_ID TEXT,
       File_Size REAL DEFAULT 0,
+      Label TEXT DEFAULT '',
+      File_Type TEXT DEFAULT 'design',
       Uploaded_By INTEGER,
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (Task_ID) REFERENCES Orders(Task_ID) ON DELETE CASCADE,
       FOREIGN KEY (Uploaded_By) REFERENCES Users(User_ID)
+    );
+
+    CREATE TABLE IF NOT EXISTS Receipts (
+      Receipt_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Receipt_Number TEXT UNIQUE NOT NULL,
+      Order_Task_ID INTEGER NOT NULL,
+      Client_ID INTEGER NOT NULL,
+      Amount REAL DEFAULT 0,
+      Notes TEXT,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (Order_Task_ID) REFERENCES Orders(Task_ID),
+      FOREIGN KEY (Client_ID) REFERENCES Clients(Client_ID)
     );
 
     CREATE TABLE IF NOT EXISTS Upload_Queue (
@@ -163,12 +177,35 @@ async function initDatabase() {
       File_Path TEXT NOT NULL,
       GDrive_File_ID TEXT,
       File_Size REAL DEFAULT 0,
+      Label TEXT DEFAULT '',
+      File_Type TEXT DEFAULT 'design',
       Uploaded_By INTEGER,
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (Task_ID) REFERENCES Orders(Task_ID) ON DELETE CASCADE,
       FOREIGN KEY (Uploaded_By) REFERENCES Users(User_ID)
     )`);
     console.log('✅ Order_Files table ready');
+  } catch (e) {}
+
+  try {
+    const fileCols = db.query("PRAGMA table_info(Order_Files)");
+    if (!fileCols.some(c => c.name === 'Label')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Label TEXT DEFAULT ''"); console.log('✅ Added Label column'); }
+    if (!fileCols.some(c => c.name === 'File_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN File_Type TEXT DEFAULT 'design'"); console.log('✅ Added File_Type column'); }
+  } catch (e) {}
+
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS Receipts (
+      Receipt_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Receipt_Number TEXT UNIQUE NOT NULL,
+      Order_Task_ID INTEGER NOT NULL,
+      Client_ID INTEGER NOT NULL,
+      Amount REAL DEFAULT 0,
+      Notes TEXT,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (Order_Task_ID) REFERENCES Orders(Task_ID),
+      FOREIGN KEY (Client_ID) REFERENCES Clients(Client_ID)
+    )`);
+    console.log('✅ Receipts table ready');
   } catch (e) {}
 
   try {
@@ -195,6 +232,44 @@ async function initDatabase() {
       console.log('✅ Recreated Users table without CHECK constraint');
     }
   } catch (e) {}
+
+  try {
+    const ordersSql = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='Orders'");
+    if (ordersSql.length && !(ordersSql[0].sql || '').includes('تم الانتهاء من القص')) {
+      db.run('PRAGMA foreign_keys=OFF');
+      const orders = db.all("SELECT * FROM Orders");
+      db.exec("DROP TABLE IF EXISTS Orders_backup");
+      db.exec(`CREATE TABLE Orders_backup (
+        Task_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+        Client_ID INTEGER NOT NULL,
+        Designer_ID INTEGER,
+        Machine_Type TEXT NOT NULL,
+        Status TEXT NOT NULL DEFAULT 'قيد التصميم',
+        Material_ID INTEGER,
+        Material_Qty REAL DEFAULT 0,
+        Price REAL DEFAULT 0,
+        Cost REAL DEFAULT 0,
+        Profit REAL DEFAULT 0,
+        File_Path TEXT,
+        File_Name TEXT,
+        Notes TEXT,
+        Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+        Updated_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (Client_ID) REFERENCES Clients(Client_ID),
+        FOREIGN KEY (Designer_ID) REFERENCES Users(User_ID),
+        FOREIGN KEY (Material_ID) REFERENCES Inventory(Material_ID)
+      )`);
+      orders.forEach(o => {
+        db.run(`INSERT INTO Orders_backup (Task_ID, Client_ID, Designer_ID, Machine_Type, Status, Material_ID, Material_Qty, Price, Cost, Profit, File_Path, File_Name, Notes, Created_At, Updated_At)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [o.Task_ID, o.Client_ID, o.Designer_ID, o.Machine_Type, o.Status, o.Material_ID, o.Material_Qty, o.Price, o.Cost, o.Profit, o.File_Path, o.File_Name, o.Notes, o.Created_At, o.Updated_At]);
+      });
+      db.exec("DROP TABLE Orders");
+      db.exec("ALTER TABLE Orders_backup RENAME TO Orders");
+      db.run('PRAGMA foreign_keys=ON');
+      console.log('✅ Recreated Orders table with new status');
+    }
+  } catch (e) { console.log('⚠️ Orders migration skipped:', typeof e, e && (e.message || String(e))); }
 
   console.log('✅ Database initialized');
 }
