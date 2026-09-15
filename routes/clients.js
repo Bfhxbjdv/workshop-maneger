@@ -68,9 +68,12 @@ router.post('/', requireAuth(), (req, res) => {
 
 router.put('/:id', requireAuth(), (req, res) => {
   const { Full_Name, Phone_Number, Rating, Notes } = req.body;
+  const current = db.get("SELECT * FROM Clients WHERE Client_ID=?", [req.params.id]);
+  if (!current) return res.status(404).json({ error: 'العميل غير موجود' });
+
   db.run(
-    "UPDATE Clients SET Full_Name=?, Phone_Number=?, Rating=?, Notes=? WHERE Client_ID=?",
-    [Full_Name, Phone_Number, Rating || 3, Notes || '', req.params.id]
+    "UPDATE Clients SET Full_Name=COALESCE(?,Full_Name), Phone_Number=COALESCE(?,Phone_Number), Rating=COALESCE(?,Rating), Notes=COALESCE(?,Notes) WHERE Client_ID=?",
+    [Full_Name || null, Phone_Number || null, Rating || null, Notes || null, req.params.id]
   );
   res.json({ success: true });
 });

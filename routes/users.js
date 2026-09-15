@@ -24,12 +24,17 @@ router.post('/', requireAuth(['Admin']), (req, res) => {
 
 router.put('/:id', requireAuth(['Admin']), (req, res) => {
   const { Name, Role, Password, Permissions } = req.body;
-  const perms = JSON.stringify(Permissions || {});
+  const current = db.get("SELECT * FROM Users WHERE User_ID=?", [req.params.id]);
+  if (!current) return res.status(404).json({ error: 'المستخدم غير موجود' });
+
+  const perms = Permissions !== undefined ? JSON.stringify(Permissions) : current.Permissions;
+  const finalName = Name || current.Name;
+  const finalRole = Role || current.Role;
   if (Password) {
     const hash = bcrypt.hashSync(Password, 10);
-    db.run("UPDATE Users SET Name=?, Role=?, Password=?, Permissions=? WHERE User_ID=?", [Name, Role, hash, perms, req.params.id]);
+    db.run("UPDATE Users SET Name=?, Role=?, Password=?, Permissions=? WHERE User_ID=?", [finalName, finalRole, hash, perms, req.params.id]);
   } else {
-    db.run("UPDATE Users SET Name=?, Role=?, Permissions=? WHERE User_ID=?", [Name, Role, perms, req.params.id]);
+    db.run("UPDATE Users SET Name=?, Role=?, Permissions=? WHERE User_ID=?", [finalName, finalRole, perms, req.params.id]);
   }
   res.json({ success: true });
 });

@@ -1,14 +1,16 @@
-const socket = io();
+const socket = (typeof io !== 'undefined') ? io() : null;
 let currentPage = 1;
 let currentFilter = 'all';
 
-socket.on('order-update', () => {
-  if (document.getElementById('ordersTableBody')) loadOrders();
-  if (document.getElementById('laserOrdersBody')) loadLaserOrders();
-  if (document.getElementById('routerOrdersBody')) loadRouterOrders();
-});
+if (socket) {
+  socket.on('order-update', () => {
+    if (document.getElementById('ordersTableBody')) loadOrders();
+    if (document.getElementById('laserOrdersBody')) loadLaserOrders();
+    if (document.getElementById('routerOrdersBody')) loadRouterOrders();
+  });
 
-socket.on('notification', (notif) => showToast(notif.message, notif.type));
+  socket.on('notification', (notif) => showToast(notif.message, notif.type));
+}
 
 function showToast(msg, type = 'info') {
   const container = document.getElementById('toastContainer') || (() => {

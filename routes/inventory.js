@@ -20,9 +20,12 @@ router.post('/', requirePermission('inventory'), (req, res) => {
 
 router.put('/:id', requirePermission('inventory'), (req, res) => {
   const { Material_Name, Thickness, Quantity, Cost_Per_Unit } = req.body;
+  const current = db.get("SELECT * FROM Inventory WHERE Material_ID=?", [req.params.id]);
+  if (!current) return res.status(404).json({ error: 'المادة غير موجودة' });
+
   db.run(
-    "UPDATE Inventory SET Material_Name=?, Thickness=?, Quantity=?, Cost_Per_Unit=? WHERE Material_ID=?",
-    [Material_Name, Thickness, Quantity, Cost_Per_Unit, req.params.id]
+    "UPDATE Inventory SET Material_Name=COALESCE(?,Material_Name), Thickness=COALESCE(?,Thickness), Quantity=COALESCE(?,Quantity), Cost_Per_Unit=COALESCE(?,Cost_Per_Unit) WHERE Material_ID=?",
+    [Material_Name || null, Thickness || null, Quantity || null, Cost_Per_Unit || null, req.params.id]
   );
   res.json({ success: true });
 });
