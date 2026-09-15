@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ملفات التصاميم - نظام إدارة الورشة</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .design-card { cursor: pointer; transition: transform .2s, box-shadow .2s; }
+    .design-card:hover { transform: translateY(-3px); box-shadow: 0 .5rem 1rem rgba(0,0,0,.15); }
+    .design-thumb { height: 180px; object-fit: cover; background: #f8f9fa; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+    .design-thumb img { width:100%; height:100%; object-fit:cover; }
+    .design-thumb .placeholder { color:#adb5bd; font-size:3rem; }
+    .badge-ext { position:absolute; top:8px; right:8px; z-index:2; }
+    .lock-badge { position:absolute; bottom:8px; left:8px; z-index:2; }
+    .thumb-badge { position:absolute; bottom:8px; right:8px; z-index:2; font-size:.7rem; }
+    .design-card .card-title { font-size:1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #viewerCanvas { width:100%; background:#fff; border:1px solid #dee2e6; border-radius:6px; }
+  </style>
+</head>
+<body data-role="<%= user.role %>" data-username="<%= user.username %>" data-perm-admin="<%= (user.role === 'Admin' || (user.permissions && user.permissions.admin)) ? '1' : '0' %>">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/"><i class="bi bi-files"></i> ملفات التصاميم</a>
+      <span class="navbar-text text-white"><i class="bi bi-person-circle"></i> <%= user.name %></span>
+      <div>
+        <a href="/" class="btn btn-outline-light btn-sm"><i class="bi bi-house"></i> الرئيسية</a>
+        <a href="/logout" class="btn btn-outline-light btn-sm">خروج</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid mt-3">
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+      <h4 class="mb-0"><i class="bi bi-files"></i> التصاميم الجاهزة</h4>
+      <div class="d-flex gap-2 flex-wrap">
+        <% if (user.role === 'Admin' || (user.permissions && user.permissions.admin)) { %>
+          <button class="btn btn-success" onclick="openUploadModal()"><i class="bi bi-upload"></i> رفع تصميم جديد</button>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="row g-2 mb-3">
+      <div class="col-md-4">
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input type="text" id="designSearch" class="form-control" placeholder="ابحث بالاسم أو الخامة أو الملاحظات..." oninput="renderDesigns()">
+        </div>
+      </div>
+      <div class="col-md-3">
+        <select id="designCategory" class="form-select" onchange="renderDesigns()">
+          <option value="">كل التصنيفات</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <select id="designFilter" class="form-select" onchange="renderDesigns()">
+          <option value="all">كل الملفات</option>
+          <option value="protected">الملفات المحمية فقط</option>
+          <option value="mine">الملفات المتاحة لي</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-outline-secondary w-100" onclick="loadDesigns()"><i class="bi bi-arrow-clockwise"></i> تحديث</button>
+      </div>
+    </div>
+
+    <div id="designsGrid" class="row g-3"></div>
+    <div id="designsEmpty" class="text-center text-muted py-5 d-none">
+      <i class="bi bi-folder2-open" style="font-size:3rem"></i>
+      <p class="mt-2">لا توجد تصاميم</p>
+    </div>
+  </div>
+
+  <% if (user.role === 'Admin' || (user.permissions && user.permissions.admin)) { %>
+  <!-- Upload Modal -->
+  <div class="modal fade" id="uploadDesignModal">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white">
+          <h5 class="modal-title"><i class="bi bi-upload"></i> رفع تصميم جديد</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <form id="uploadDesignForm">
+            <div class="row g-2">
+              <div class="col-md-6">
+                <label class="form-label">اسم التصميم <span class="text-danger">*</span></label>
+                <input type="text" id="dName" class="form-control" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">التصنيف</label>
+                <input type="text" id="dCategory" class="form-control" list="categoryList" placeholder="مثال: ديكور، أثاث...">
+                <datalist id="categoryList"></datalist>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">الخامة</label>
+                <input type="text" id="dMaterial" class="form-control" placeholder="مثال: خشب MDF">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">السمك</label>
+                <input type="text" id="dThickness" class="form-control" placeholder="مثال: 3 مم">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">الوحدة</label>
+                <select id="dUnit" class="form-select">
+                  <option value="سم">سم</option>
+                  <option value="مم">مم</option>
+                  <option value="بوصة">بوصة</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">الطول</label>
+                <input type="number" id="dWidth" class="form-control" step="0.1">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">العرض</label>
+                <input type="number" id="dHeight" class="form-control" step="0.1">
+              </div>
+              <div class="col-12">
+                <label class="form-label">مواصفات إضافية / ملاحظات</label>
+                <textarea id="dNotes" class="form-control" rows="2" placeholder="المواصفات، طريقة التركيب، الملاحظات..."></textarea>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">ملف التصميم (DXF / CDR / PLT / AI) <span class="text-danger">*</span></label>
+                <input type="file" id="dFile" class="form-control" accept=".dxf,.cdr,.plt,.ai,.svg,.pdf,.eps" required>
+                <div class="form-text">يدعم: DXF , CDR , PLT , AI</div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">صورة مميزة (لتمييز الملف) <span class="text-danger">*</span></label>
+                <input type="file" id="dThumb" class="form-control" accept="image/*" required>
+                <div class="form-text">صورة توضح شكل التصميم</div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">كلمة مرور للملف (اختياري)</label>
+                <input type="text" id="dPassword" class="form-control" placeholder="اتركه فارغاً بدون حماية">
+                <div class="form-text">لن يُفتح الملف إلا بكلمة المرور</div>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">من يمكنه استخدامه</label>
+                <select id="dPermitted" class="form-select" multiple size="4">
+                  <option value="__all__">جميع المستخدمين</option>
+                </select>
+                <div class="form-text">اضغط Ctrl لتحديد أكثر من مصمم. في حال عدم تحديد أحد سيتمكن الجميع من فتحه</div>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-primary" onclick="uploadDesign()"><i class="bi bi-cloud-upload"></i> رفع</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Modal -->
+  <div class="modal fade" id="editDesignModal">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-warning text-dark">
+          <h5 class="modal-title"><i class="bi bi-pencil"></i> تعديل التصميم</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editDesignId">
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">اسم التصميم</label>
+              <input type="text" id="eName" class="form-control">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">التصنيف</label>
+              <input type="text" id="eCategory" class="form-control">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">الخامة</label>
+              <input type="text" id="eMaterial" class="form-control">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">السمك</label>
+              <input type="text" id="eThickness" class="form-control">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">الوحدة</label>
+              <select id="eUnit" class="form-select">
+                <option value="سم">سم</option>
+                <option value="مم">مم</option>
+                <option value="بوصة">بوصة</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">الطول</label>
+              <input type="number" id="eWidth" class="form-control" step="0.1">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">العرض</label>
+              <input type="number" id="eHeight" class="form-control" step="0.1">
+            </div>
+            <div class="col-12">
+              <label class="form-label">مواصفات / ملاحظات</label>
+              <textarea id="eNotes" class="form-control" rows="2"></textarea>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">استبدال الصورة المميزة</label>
+              <input type="file" id="eThumb" class="form-control" accept="image/*">
+              <div class="form-text">اتركه فارغاً للإبقاء على الصورة الحالية</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">كلمة مرور جديدة (مختارة/تغييرها)</label>
+              <input type="text" id="ePassword" class="form-control" placeholder="اتركه فارغاً للإبقاء">
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" id="eClearPassword">
+                <label class="form-check-label" for="eClearPassword">إزالة كلمة المرور</label>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">من يمكنه استخدامه</label>
+              <select id="ePermitted" class="form-select" multiple size="4"></select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-danger me-auto" onclick="deleteDesign()"><i class="bi bi-trash"></i> حذف</button>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-warning" onclick="saveDesignEdit()"><i class="bi bi-save"></i> حفظ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <% } %>
+
+  <!-- View Modal -->
+  <div class="modal fade" id="viewDesignModal">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header bg-dark text-white">
+          <h5 class="modal-title"><i class="bi bi-eye"></i> <span id="viewDesignName"></span></h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="viewPasswordWrap" class="text-center py-5 d-none">
+            <i class="bi bi-lock-fill text-warning" style="font-size:3rem"></i>
+            <h5 class="mt-2">هذا الملف محمي بكلمة مرور</h5>
+            <div class="input-group mx-auto" style="max-width:300px">
+              <input type="password" id="viewPassword" class="form-control" placeholder="أدخل كلمة المرور">
+              <button class="btn btn-warning" onclick="verifyDesignPassword()"><i class="bi bi-unlock"></i> فتح</button>
+            </div>
+            <div class="text-danger mt-1" id="viewPasswordError"></div>
+          </div>
+          <div id="viewContent">
+            <div class="row mb-3" id="viewSpecs"></div>
+            <div class="text-center">
+              <div class="d-flex justify-content-center gap-2 mb-2 flex-wrap">
+                <a id="viewDownloadBtn" class="btn btn-outline-primary btn-sm" download><i class="bi bi-download"></i> تحميل الملف</a>
+                <button class="btn btn-outline-secondary btn-sm" onclick="togglePreviewMode()" id="viewModeBtn"><i class="bi bi-card-image"></i> عرض الصورة</button>
+              </div>
+              <div id="viewerPlaceholder" class="d-none">
+                <div class="design-thumb mx-auto rounded" style="max-width:500px;height:260px">
+                  <img id="viewThumbImg" alt="صورة التصميم">
+                </div>
+                <div class="text-muted mt-2 small">
+                  <i class="bi bi-info-circle"></i> هذا النوع من الملفات يُعرض هنا كصورة مميزة. لفتح النسخة الأصلية استخدم زر التحميل.
+                </div>
+              </div>
+              <canvas id="viewerCanvas" class="d-none" height="400"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <% if (user.role === 'Admin' || (user.permissions && user.permissions.admin)) { %>
+            <button class="btn btn-warning btn-sm" onclick="openEditDesignFromView()"><i class="bi bi-pencil"></i> تعديل</button>
+          <% } %>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/designs.js"></script>
+  <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
+</body>
+</html>

@@ -77,6 +77,7 @@ app.use('/api/files', require('./routes/files'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/designs', require('./routes/designs'));
 app.use('/admin', require('./routes/admin'));
 
 // Page routes
@@ -111,6 +112,16 @@ app.get('/users', requirePermission('users'), (req, res) => {
 
 app.get('/expenses', requirePermission('expenses'), (req, res) => {
   res.render('expenses', { user: res.locals.user });
+});
+
+app.get('/designs', (req, res) => {
+  if (!req.session.userId) return res.redirect('/login');
+  res.render('designs', { user: res.locals.user });
+});
+
+app.get('/account', (req, res) => {
+  if (!req.session.userId) return res.redirect('/login');
+  res.render('account', { user: res.locals.user });
 });
 
 io.on('connection', (socket) => {

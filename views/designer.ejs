@@ -17,6 +17,8 @@
         <% if (user.role === 'Admin' || (user.permissions && user.permissions.clients)) { %>
           <a href="/clients" class="btn btn-outline-light btn-sm"><i class="bi bi-people"></i> العملاء</a>
         <% } %>
+        <a href="/designs" class="btn btn-outline-light btn-sm"><i class="bi bi-files"></i> التصاميم</a>
+        <a href="/account" class="btn btn-outline-light btn-sm"><i class="bi bi-person-gear"></i> حسابي</a>
         <% if (user.role === 'Admin' || (user.permissions && user.permissions.inventory)) { %>
           <a href="/inventory" class="btn btn-outline-light btn-sm"><i class="bi bi-box"></i> المخزون</a>
         <% } %>

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>الحساب الشخصي - نظام إدارة الورشة</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-role="<%= user.role %>">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/"><i class="bi bi-person-circle"></i> الحساب الشخصي</a>
+      <span class="navbar-text text-white"><i class="bi bi-person-circle"></i> <%= user.name %></span>
+      <div>
+        <a href="/" class="btn btn-outline-light btn-sm"><i class="bi bi-house"></i> الرئيسية</a>
+        <a href="/logout" class="btn btn-outline-light btn-sm">خروج</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container mt-4" style="max-width:500px">
+    <div class="card">
+      <div class="card-header bg-primary text-white"><i class="bi bi-person-gear"></i> تغيير اسم المستخدم وكلمة المرور</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">اسم المستخدم الحالي: <strong><%= user.username %></strong></label>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">كلمة المرور الحالية <span class="text-danger">*</span></label>
+          <input type="password" id="currentPassword" class="form-control" required>
+        </div>
+        <hr>
+        <div class="mb-3">
+          <label class="form-label">اسم المستخدم الجديد (اتركه فارغاً إذا لا تريد التغيير)</label>
+          <input type="text" id="newUsername" class="form-control" placeholder="<%= user.username %>">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">كلمة المرور الجديدة (اتركه فارغاً إذا لا تريد التغيير)</label>
+          <input type="password" id="newPassword" class="form-control">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">تأكيد كلمة المرور الجديدة</label>
+          <input type="password" id="confirmPassword" class="form-control">
+        </div>
+        <div class="alert alert-danger d-none" id="accountError"></div>
+        <div class="alert alert-success d-none" id="accountSuccess">تم الحفظ بنجاح!</div>
+        <button class="btn btn-primary w-100" onclick="saveAccount()"><i class="bi bi-save"></i> حفظ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/main.js"></script>
+  <script>
+    async function saveAccount() {
+      const currentPw = document.getElementById('currentPassword').value.trim();
+      const newUsername = document.getElementById('newUsername').value.trim();
+      const newPw = document.getElementById('newPassword').value.trim();
+      const confirmPw = document.getElementById('confirmPassword').value.trim();
+      const errEl = document.getElementById('accountError');
+      const okEl = document.getElementById('accountSuccess');
+      errEl.classList.add('d-none'); okEl.classList.add('d-none');
+      if (!currentPw) { errEl.textContent = 'كلمة المرور الحالية مطلوبة'; errEl.classList.remove('d-none'); return; }
+      if (newPw && newPw !== confirmPw) { errEl.textContent = 'كلمتا المرور غير متطابقتين'; errEl.classList.remove('d-none'); return; }
+      if (!newPw && !newUsername) { errEl.textContent = 'قم بتغيير اسم المستخدم أو كلمة المرور'; errEl.classList.remove('d-none'); return; }
+      try {
+        const res = await fetch('/api/users/me', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword: currentPw, newUsername: newUsername || undefined, newPassword: newPw || undefined })
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || 'حدث خطأ'; errEl.classList.remove('d-none'); return; }
+        okEl.classList.remove('d-none');
+        if (newUsername) document.querySelector('.navbar-text').innerHTML = `<i class="bi bi-person-circle"></i> ${newUsername}`;
+      } catch (e) { errEl.textContent = 'خطأ في الاتصال'; errEl.classList.remove('d-none'); }
+    }
+  </script>
+  <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
+</body>
+</html>

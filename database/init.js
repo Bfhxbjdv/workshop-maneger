@@ -147,6 +147,34 @@ async function initDatabase() {
       Details TEXT,
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS Designs (
+      Design_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Name TEXT NOT NULL,
+      Category TEXT DEFAULT '',
+      Material TEXT DEFAULT '',
+      Thickness TEXT DEFAULT '',
+      Width REAL DEFAULT 0,
+      Height REAL DEFAULT 0,
+      Unit TEXT DEFAULT 'سم',
+      Notes TEXT DEFAULT '',
+      FilePath TEXT NOT NULL,
+      Original_Name TEXT NOT NULL,
+      ThumbnailPath TEXT DEFAULT NULL,
+      Password TEXT DEFAULT NULL,
+      CreatedBy INTEGER,
+      CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (CreatedBy) REFERENCES Users(User_ID)
+    );
+
+    CREATE TABLE IF NOT EXISTS Design_Permissions (
+      ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Design_ID INTEGER NOT NULL,
+      User_ID INTEGER NOT NULL,
+      FOREIGN KEY (Design_ID) REFERENCES Designs(Design_ID) ON DELETE CASCADE,
+      FOREIGN KEY (User_ID) REFERENCES Users(User_ID) ON DELETE CASCADE,
+      UNIQUE(Design_ID, User_ID)
+    );
   `);
 
   const existing = db.query("SELECT COUNT(*) as cnt FROM Users");
@@ -270,6 +298,36 @@ async function initDatabase() {
       console.log('✅ Recreated Orders table with new status');
     }
   } catch (e) { console.log('⚠️ Orders migration skipped:', typeof e, e && (e.message || String(e))); }
+
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS Designs (
+      Design_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Name TEXT NOT NULL,
+      Category TEXT DEFAULT '',
+      Material TEXT DEFAULT '',
+      Thickness TEXT DEFAULT '',
+      Width REAL DEFAULT 0,
+      Height REAL DEFAULT 0,
+      Unit TEXT DEFAULT 'سم',
+      Notes TEXT DEFAULT '',
+      FilePath TEXT NOT NULL,
+      Original_Name TEXT NOT NULL,
+      ThumbnailPath TEXT DEFAULT NULL,
+      Password TEXT DEFAULT NULL,
+      CreatedBy INTEGER,
+      CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (CreatedBy) REFERENCES Users(User_ID)
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS Design_Permissions (
+      ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Design_ID INTEGER NOT NULL,
+      User_ID INTEGER NOT NULL,
+      FOREIGN KEY (Design_ID) REFERENCES Designs(Design_ID) ON DELETE CASCADE,
+      FOREIGN KEY (User_ID) REFERENCES Users(User_ID) ON DELETE CASCADE,
+      UNIQUE(Design_ID, User_ID)
+    )`);
+    console.log('✅ Designs tables ready');
+  } catch (e) {}
 
   console.log('✅ Database initialized');
 }
