@@ -260,7 +260,6 @@ router.delete('/:id', requirePermission('orders'), (req, res) => {
         try { fs.unlinkSync(path.join(archiveRoot, file.File_Path)); } catch {}
       }
     }
-    try { fs.rmSync(path.join(archiveRoot, order.Client_Name ? String(order.Client_Name).replace(/[<>:"\/\\|?*]/g, '_').trim() : ''), { recursive: true, force: true }); } catch {}
     db.run("DELETE FROM Order_Files WHERE Task_ID=?", [req.params.id]);
   }
   if (order.File_Path) {
@@ -270,6 +269,25 @@ router.delete('/:id', requirePermission('orders'), (req, res) => {
       const filePath = path.join(archiveRoot, order.File_Path);
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
+  }
+  // clean any leftover Task_<id> folders inside the client archive
+  const safeClient = order.Client_Name ? String(order.Client_Name).replace(/[<>:"\/\\|?*]/g, '_').trim() : '';
+  if (safeClient) {
+    const clientDir = path.join(archiveRoot, safeClient);
+    try {
+      const years = fs.readdirSync(clientDir);
+      for (const y of years) {
+        const yearDir = path.join(clientDir, y);
+        if (!fs.statSync(yearDir).isDirectory()) continue;
+        const months = fs.readdirSync(yearDir);
+        for (const m of months) {
+          const monthDir = path.join(yearDir, m);
+          if (!fs.statSync(monthDir).isDirectory()) continue;
+          const taskDir = path.join(monthDir, `Task_${req.params.id}`);
+          if (fs.existsSync(taskDir)) fs.rmSync(taskDir, { recursive: true, force: true });
+        }
+      }
+    } catch {}
   }
   db.run("DELETE FROM Order_Materials WHERE Task_ID=?", [req.params.id]);
   db.run("DELETE FROM Notifications WHERE Task_ID=?", [req.params.id]);
