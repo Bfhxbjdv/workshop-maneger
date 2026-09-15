@@ -96,7 +96,10 @@ function designCard(d) {
         <div class="design-thumb">
           ${hasThumb ? `<img src="/api/designs/${d.Design_ID}/thumbnail" alt="${d.Name}">` : `<i class="bi bi-file-earmark-image placeholder"></i>`}
         </div>
-        ${d.PasswordProtected ? `<span class="badge bg-warning lock-badge"><i class="bi bi-lock-fill"></i></span>` : ''}
+        <div class="lock-badge d-flex gap-1">
+          ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
+          <a href="/api/designs/${d.Design_ID}/download" class="badge bg-primary text-decoration-none" title="تحميل" onclick="event.stopPropagation()"><i class="bi bi-download"></i></a>
+        </div>
         ${(needsAdmin && permCount > 0) ? `<span class="badge bg-info thumb-badge"><i class="bi bi-people"></i> ${permCount}</span>` : ''}
       </div>
       <div class="card-body p-2">
@@ -424,7 +427,7 @@ function extOf(d) { return (d.Original_Name || '').split('.').pop().toLowerCase(
 
 async function loadViewFile(d) {
   previewMode = 'auto';
-  document.getElementById('viewDownloadBtn').href = `/api/designs/${d.Design_ID}/file`;
+  document.getElementById('viewDownloadBtn').href = `/api/designs/${d.Design_ID}/download`;
   const canvas = document.getElementById('viewerCanvas');
   const placeholder = document.getElementById('viewerPlaceholder');
   const modeBtn = document.getElementById('viewModeBtn');
@@ -513,7 +516,7 @@ async function verifyDesignPassword() {
 }
 
 // ===================== ADD TO ORDER =====================
-function openAddToOrderModal() {
+async function openAddToOrderModal() {
   if (!currentViewDesign) return;
   aotDesignId = currentViewDesign.Design_ID;
   aotSelectedClient = null;
@@ -525,6 +528,11 @@ function openAddToOrderModal() {
   document.getElementById('aotOrderSelect').innerHTML = '<option value="">- إنشاء طلب جديد -</option>';
   document.getElementById('aotNewOrderWrap').classList.add('d-none');
   document.getElementById('aotSubmit').disabled = true;
+  const ds = document.getElementById('aotDesigner');
+  if (ds) {
+    const designers = (allUsers || []).filter(u => u.Role === 'Designer' || u.Role === 'Admin');
+    ds.innerHTML = '<option value="">- المصمم الحالي -</option>' + designers.map(u => `<option value="${u.User_ID}">${u.Name}${u.Role === 'Admin' ? ' (مدير)' : ''}</option>`).join('');
+  }
   new bootstrap.Modal(document.getElementById('addToOrderModal')).show();
 }
 
@@ -581,7 +589,11 @@ async function submitAddToOrder() {
   const body = { Client_ID: aotSelectedClient };
   const taskId = document.getElementById('aotOrderSelect').value;
   if (taskId) body.Task_ID = parseInt(taskId, 10);
-  else body.Machine_Type = document.getElementById('aotMachine').value;
+  else {
+    body.Machine_Type = document.getElementById('aotMachine').value;
+    const des = document.getElementById('aotDesigner')?.value;
+    if (des) body.Designer_ID = parseInt(des, 10);
+  }
 
   try {
     const res = await fetch(`/api/designs/${aotDesignId}/add-to-order`, {

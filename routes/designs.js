@@ -243,6 +243,23 @@ router.get('/:id/file', requireAuth(), (req, res) => {
   fs.createReadStream(fp).pipe(res);
 });
 
+// ---------- DOWNLOAD (always attachment) ----------
+router.get('/:id/download', requireAuth(), (req, res) => {
+  const d = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
+  if (!d) return res.status(404).json({ error: 'التصميم غير موجود' });
+  if (req.session.role !== 'Admin') {
+    const allowed = db.get("SELECT 1 FROM Design_Permissions WHERE Design_ID=? AND User_ID=?", [req.params.id, req.session.userId]);
+    const any = db.get("SELECT COUNT(*) as c FROM Design_Permissions WHERE Design_ID=?", [req.params.id]);
+    if (!allowed && any.c > 0) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الملف' });
+  }
+  if (d.Password && !req.session.unlockedDesigns?.[d.Design_ID]) {
+    return res.status(403).json({ error: 'هذا الملف محمي بكلمة مرور', needsPassword: true });
+  }
+  const fp = path.join(STORAGE, d.FilePath);
+  if (!fs.existsSync(fp)) return res.status(404).json({ error: 'الملف غير موجود' });
+  res.download(fp, d.Original_Name || `design_${d.Design_ID}`);
+});
+
 // ---------- ADD DESIGN TO CLIENT ORDER ----------
 const CLIENT_ARCHIVE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 if (!fs.existsSync(CLIENT_ARCHIVE)) fs.mkdirSync(CLIENT_ARCHIVE, { recursive: true });
@@ -279,8 +296,13 @@ router.post('/:id/add-to-order', requireAuth(), async (req, res) => {
       const c = db.get("SELECT * FROM Clients WHERE Client_ID=?", [req.body.Client_ID]);
       if (c) {
         client = c;
+        let designerId = req.body.Designer_ID || req.session.userId;
+        if (req.body.Designer_ID) {
+          const des = db.get("SELECT User_ID FROM Users WHERE User_ID=? AND (Role='Designer' OR Role='Admin')", [req.body.Designer_ID]);
+          if (!des) designerId = req.session.userId;
+        }
         const res2 = db.run("INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes) VALUES (?, ?, ?, 'قيد التصميم', ?)",
-          [c.Client_ID, req.session.userId, req.body.Machine_Type || 'Laser', `إضافة تصميم: ${design.Name}`]);
+          [c.Client_ID, designerId, req.body.Machine_Type || 'Laser', `إضافة تصميم: ${design.Name}`]);
         order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [res2.lastId]);
         if (order) order.Task_ID = res2.lastId;
       }
