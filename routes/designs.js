@@ -11,6 +11,15 @@ const STORAGE = path.join(__dirname, '..', 'Designs_Storage');
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
 const upload = multer({ dest: path.join(__dirname, '..', 'uploads') });
 
+const MIME_MAP = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf', '.txt': 'text/plain', '.dxf': 'application/dxf',
+  '.plt': 'application/octet-stream', '.eps': 'application/postscript',
+  '.cdr': 'application/octet-stream', '.ai': 'application/postscript'
+};
+function mimeFor(origName) { return MIME_MAP[(path.extname(origName || '')).toLowerCase()] || 'application/octet-stream'; }
+
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d; }
 
 // ---------- helper: design with permission visibility ----------
@@ -84,6 +93,55 @@ router.post('/', requirePermission('admin'), upload.fields([{ name: 'file', maxC
 
     res.json({ success: true, Design_ID: result.lastId });
   } catch (e) { console.error('Design create error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// ---------- BATCH CREATE (admin) ----------
+router.post('/batch', requirePermission('admin'), upload.fields([{ name: 'files', maxCount: 50 }, { name: 'thumbs', maxCount: 50 }]), (req, res) => {
+  try {
+    let items = [];
+    try { items = JSON.parse(req.body.items || '[]'); } catch (e) {}
+    const fileArr = req.files?.files || [];
+    const thumbArr = req.files?.thumbs || [];
+    if (!fileArr.length) return res.status(400).json({ error: 'لم يتم اختيار ملفات' });
+
+    const created = [];
+    const errors = [];
+    for (let i = 0; i < fileArr.length; i++) {
+      try {
+        const uploaded = fileArr[i];
+        const item = items[i] || {};
+        const name = (item.Name || '').trim();
+        if (!name) { errors.push(`الملف ${i + 1}: الاسم مطلوب`); continue; }
+
+        const designDir = ensureDir(path.join(STORAGE, `design_${Date.now()}_${i}`));
+        const origName = uploaded.originalname;
+        const filePath = path.join(designDir, origName);
+        fs.renameSync(uploaded.path, filePath);
+
+        let thumbPath = null;
+        const thumbFile = thumbArr[i];
+        if (thumbFile) {
+          thumbPath = path.join(designDir, 'thumbnail' + path.extname(thumbFile.originalname) || '.png');
+          fs.renameSync(thumbFile.path, thumbPath);
+        }
+
+        const hashPass = item.Password ? bcrypt.hashSync(item.Password, 10) : null;
+        const result = db.run(`INSERT INTO Designs
+          (Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password, CreatedBy)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [name, item.Category || '', item.Material || '', item.Thickness || '',
+            parseFloat(item.Width) || 0, parseFloat(item.Height) || 0, item.Unit || 'سم', item.Notes || '',
+            path.relative(STORAGE, filePath), origName, thumbPath ? path.relative(STORAGE, thumbPath) : null, hashPass, req.session.userId]);
+        created.push(result.lastId);
+      } catch (e) {
+        errors.push(`الملف ${i + 1}: ${e.message}`);
+        try { fs.rmSync(path.join(STORAGE, `design_${Date.now()}_${i}`), { recursive: true, force: true }); } catch {}
+      }
+    }
+
+    if (!created.length) return res.status(400).json({ error: errors.join(' | ') || 'فشل رفع أي ملف' });
+    res.json({ success: true, created, count: created.length, errors: errors.slice(0, 5) });
+  } catch (e) { console.error('Design batch error:', e); res.status(500).json({ error: e.message }); }
 });
 
 // ---------- UPDATE (admin) ----------
@@ -177,9 +235,106 @@ router.get('/:id/file', requireAuth(), (req, res) => {
   }
   const fp = path.join(STORAGE, d.FilePath);
   if (!fs.existsSync(fp)) return res.status(404).json({ error: 'الملف غير موجود' });
-  res.setHeader('Content-Type', 'application/octet-stream');
-  res.setHeader('Content-Disposition', `inline; filename="${d.Original_Name}"`);
+  const ext = path.extname(d.Original_Name || '').toLowerCase();
+  const inline = ['.png','.jpg','.jpeg','.gif','.webp','.bmp','.svg','.pdf','.txt','.dxf'].includes(ext);
+  res.setHeader('Content-Type', mimeFor(d.Original_Name));
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${d.Original_Name}"`);
+  if (inline) res.setHeader('Access-Control-Allow-Origin', '*');
   fs.createReadStream(fp).pipe(res);
+});
+
+// ---------- ADD DESIGN TO CLIENT ORDER ----------
+const CLIENT_ARCHIVE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
+if (!fs.existsSync(CLIENT_ARCHIVE)) fs.mkdirSync(CLIENT_ARCHIVE, { recursive: true });
+
+function clientDirFor(clientName) {
+  const safe = (clientName || `client`).replace(/[<>:"\/\\|?*]/g, '_').trim() || 'client';
+  const d = path.join(CLIENT_ARCHIVE, safe);
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+
+router.post('/:id/add-to-order', requireAuth(), async (req, res) => {
+  try {
+    const design = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
+    if (!design) return res.status(404).json({ error: 'التصميم غير موجود' });
+
+    if (req.session.role !== 'Admin') {
+      const allowed = db.get("SELECT 1 FROM Design_Permissions WHERE Design_ID=? AND User_ID=?", [req.params.id, req.session.userId]);
+      const any = db.get("SELECT COUNT(*) as c FROM Design_Permissions WHERE Design_ID=?", [req.params.id]);
+      if (!allowed && any.c > 0) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الملف' });
+    }
+    if (design.Password && !req.session.unlockedDesigns?.[design.Design_ID]) {
+      return res.status(403).json({ error: 'هذا الملف محمي بكلمة مرور', needsPassword: true });
+    }
+
+    let order = null;
+    let client = null;
+
+    if (req.body.Task_ID) {
+      const orderRow = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [req.body.Task_ID]);
+      if (orderRow) { order = orderRow; order.Task_ID = parseInt(req.body.Task_ID, 10); }
+    }
+    if (!order && req.body.Client_ID) {
+      const c = db.get("SELECT * FROM Clients WHERE Client_ID=?", [req.body.Client_ID]);
+      if (c) {
+        client = c;
+        const res2 = db.run("INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes) VALUES (?, ?, ?, 'قيد التصميم', ?)",
+          [c.Client_ID, req.session.userId, req.body.Machine_Type || 'Laser', `إضافة تصميم: ${design.Name}`]);
+        order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [res2.lastId]);
+        if (order) order.Task_ID = res2.lastId;
+      }
+    }
+
+    if (!order) return res.status(404).json({ error: 'الطلب أو العميل غير موجود' });
+
+    const clientDir = clientDirFor(order.Client_Name || `client_${order.Client_ID}`);
+    const now = new Date();
+    const monthDir = path.join(clientDir, now.getFullYear().toString(), now.toLocaleString('en', { month: 'long' }));
+    if (!fs.existsSync(monthDir)) fs.mkdirSync(monthDir, { recursive: true });
+    const taskDir = path.join(monthDir, `Task_${order.Task_ID}`);
+    if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
+
+    const srcPath = path.join(STORAGE, design.FilePath);
+    if (!fs.existsSync(srcPath)) return res.status(404).json({ error: 'ملف التصميم غير موجود على القرص' });
+    const buffer = fs.readFileSync(srcPath);
+
+    const storedName = `TaskID_${order.Task_ID}_${design.Original_Name}`;
+    const localPath = path.join(taskDir, storedName);
+    fs.writeFileSync(localPath, buffer);
+
+    let filePath = path.relative(CLIENT_ARCHIVE, localPath);
+    let gdriveFileId = null;
+    const gdrive = require('../services/googleDrive');
+    try {
+      const http = require('http');
+      const online = await new Promise(resolve => {
+        const r = http.get('http://clients3.google.com/generate_204', { timeout: 3000 }, (res3) => { resolve(res3.statusCode === 204); r.destroy(); });
+        r.on('error', () => resolve(false)); r.on('timeout', () => { r.destroy(); resolve(false); });
+      });
+      if (online && gdrive.isConfigured()) {
+        const up = await gdrive.uploadFile(order.Task_ID, order.Client_Name, storedName, buffer);
+        if (up && up.fileId) { gdriveFileId = up.fileId; filePath = `gdrive://${up.fileId}`; }
+        else db.run("INSERT INTO Upload_Queue (Task_ID, Client_Name, Original_Name, File_Path) VALUES (?, ?, ?, ?)", [order.Task_ID, order.Client_Name, storedName, localPath]);
+      } else {
+        db.run("INSERT INTO Upload_Queue (Task_ID, Client_Name, Original_Name, File_Path) VALUES (?, ?, ?, ?)", [order.Task_ID, order.Client_Name, storedName, localPath]);
+      }
+    } catch (e) {
+      db.run("INSERT INTO Upload_Queue (Task_ID, Client_Name, Original_Name, File_Path) VALUES (?, ?, ?, ?)", [order.Task_ID, order.Client_Name, storedName, localPath]);
+    }
+
+    const ins = db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, GDrive_File_ID, File_Size, Label, File_Type, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, ?, 'design', ?)",
+      [order.Task_ID, design.Original_Name, storedName, filePath, gdriveFileId, buffer.length, `${design.Name}${design.Notes ? ' - ' + design.Notes : ''}`, req.session.userId]);
+
+    db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [filePath, design.Original_Name, order.Task_ID]);
+    db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)", [order.Task_ID, `أُضيف التصميم «${design.Name}» إلى الطلب #${order.Task_ID}`, 'info']);
+
+    const updated = db.get(`SELECT o.*, c.Full_Name as Client_Name, c.Phone_Number, i.Material_Name, i.Thickness
+      FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID LEFT JOIN Inventory i ON o.Material_ID=i.Material_ID WHERE o.Task_ID=?`, [order.Task_ID]);
+    if (global.io) { global.io.emit('order-update', updated); global.io.emit('notification', { message: `أُضيف التصميم «${design.Name}» إلى الطلب #${order.Task_ID}`, type: 'info' }); }
+
+    res.json({ success: true, File_ID: ins.lastId, Task_ID: order.Task_ID, Client_Name: order.Client_Name });
+  } catch (e) { console.error('Add design to order error:', e); res.status(500).json({ error: e.message || 'فشل إضافة التصميم إلى الطلب' }); }
 });
 
 module.exports = router;

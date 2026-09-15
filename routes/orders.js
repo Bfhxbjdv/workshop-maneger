@@ -250,9 +250,26 @@ router.post('/notifications/read', requireAuth(), (req, res) => {
 router.delete('/:id', requirePermission('orders'), (req, res) => {
   const order = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.id]);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+  const archiveRoot = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
+  const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=?", [req.params.id]);
+  if (files) {
+    for (const file of files) {
+      if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
+        try { require('../services/googleDrive').deleteFile(file.File_Path.replace('gdrive://', '')); } catch {}
+      } else if (file.File_Path) {
+        try { fs.unlinkSync(path.join(archiveRoot, file.File_Path)); } catch {}
+      }
+    }
+    try { fs.rmSync(path.join(archiveRoot, order.Client_Name ? String(order.Client_Name).replace(/[<>:"\/\\|?*]/g, '_').trim() : ''), { recursive: true, force: true }); } catch {}
+    db.run("DELETE FROM Order_Files WHERE Task_ID=?", [req.params.id]);
+  }
   if (order.File_Path) {
-    const filePath = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive', order.File_Path);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    if (order.File_Path.startsWith('gdrive://')) {
+      try { require('../services/googleDrive').deleteFile(order.File_Path.replace('gdrive://', '')); } catch {}
+    } else {
+      const filePath = path.join(archiveRoot, order.File_Path);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
   }
   db.run("DELETE FROM Order_Materials WHERE Task_ID=?", [req.params.id]);
   db.run("DELETE FROM Notifications WHERE Task_ID=?", [req.params.id]);

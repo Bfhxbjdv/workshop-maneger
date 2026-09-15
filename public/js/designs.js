@@ -3,12 +3,22 @@ let allDesigns = [];
 let allUsers = [];
 let currentViewDesign = null;
 let previewMode = 'auto';
-let viewerCanvasCtx = null;
 const isAdmin = () => (document.body.dataset.role === 'Admin') || (document.body.dataset.permAdmin === '1');
+let aotDesignId = null;
+let aotSelectedClient = null;
+let batchFileList = [];
+let aotSearchTimer = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadDesigns();
   loadUsersForPerms();
+  document.getElementById('batchFiles')?.addEventListener('change', onBatchFilesChanged);
+  document.getElementById('aotOrderSelect')?.addEventListener('change', () => {
+    const wrap = document.getElementById('aotNewOrderWrap');
+    if (wrap) wrap.classList.toggle('d-none', !!document.getElementById('aotOrderSelect').value);
+    document.getElementById('aotSubmit').disabled = false;
+  });
+  document.getElementById('aotSearch')?.addEventListener('input', debounceAotSearch);
 });
 
 function openUploadModal() {
@@ -31,6 +41,7 @@ async function loadUsersForPerms() {
     if (!res.ok) return;
     allUsers = await res.json();
     fillUserMultiSelect('ePermitted');
+    fillUserMultiSelect('bPermitted');
   } catch {}
 }
 
@@ -52,10 +63,7 @@ async function loadDesigns() {
 function buildCategoryList() {
   const cats = new Set(allDesigns.map(d => d.Category).filter(Boolean));
   const sel = document.getElementById('designCategory');
-  if (!sel) return;
-  sel.innerHTML = `<option value="">كل التصنيفات</option>` + [...cats].map(c => `<option value="${c}">${c}</option>`).join('');
-  const list = document.getElementById('categoryList');
-  if (list) list.innerHTML = [...cats].map(c => `<option value="${c}">`).join('');
+  if (sel) sel.innerHTML = `<option value="">كل التصنيفات</option>` + [...cats].map(c => `<option value="${c}">${c}</option>`).join('');
 }
 
 function renderDesigns() {
@@ -102,15 +110,21 @@ function designCard(d) {
   </div>`;
 }
 
-// ===================== UPLOAD =====================
+// ===================== UPLOAD (single) =====================
 async function uploadDesign() {
   const file = document.getElementById('dFile').files[0];
-  const thumb = document.getElementById('dThumb').files[0];
   const name = document.getElementById('dName').value.trim();
-  if (!file || !thumb || !name) { showToast('اسم التصميم والملف والصورة مطلوبة', 'warning'); return; }
+  if (!file || !name) { showToast('اسم التصميم والملف مطلوبان', 'warning'); return; }
   const fd = new FormData();
   fd.append('file', file);
-  fd.append('thumbnail', thumb);
+  const thumb = document.getElementById('dThumb').files[0];
+  if (thumb) fd.append('thumbnail', thumb);
+  else {
+    try {
+      const autoThumb = await generateAutoThumbnail(file);
+      if (autoThumb) fd.append('thumbnail', autoThumb);
+    } catch {}
+  }
   fd.append('Name', name);
   fd.append('Category', document.getElementById('dCategory').value.trim());
   fd.append('Material', document.getElementById('dMaterial').value.trim());
@@ -129,7 +143,7 @@ async function uploadDesign() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'فشل الرفع');
     const sel = document.getElementById('dPermitted');
-    if (sel.selectedOptions.length > 0 && ![...sel.selectedOptions].some(o => o.value === '__all__')) {
+    if (sel && sel.selectedOptions.length > 0 && ![...sel.selectedOptions].some(o => o.value === '__all__')) {
       await fetch(`/api/designs/${data.Design_ID}/permissions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userIds: [...sel.selectedOptions].map(o => parseInt(o.value)) })
@@ -140,6 +154,158 @@ async function uploadDesign() {
     loadDesigns();
   } catch (e) { showToast(e.message, 'danger'); }
   finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع'; }
+}
+
+// ===================== AUTO-THUMBNAIL GENERATION =====================
+function generateAutoThumbnail(file) {
+  return new Promise(resolve => {
+    const ext = (file.name || '').split('.').pop().toLowerCase();
+    const IMAGE_EXTS = ['png','jpg','jpeg','gif','webp','bmp'];
+    if (IMAGE_EXTS.includes(ext)) {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        const MAX = 360;
+        let w = img.width, h = img.height;
+        const s = Math.min(1, MAX / Math.max(w, h));
+        c.width = Math.round(w * s); c.height = Math.round(h * s);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        c.toBlob(b => resolve(b ? new File([b], 'auto_thumb.png', { type: 'image/png' }) : null), 'image/png');
+      };
+      img.onerror = () => resolve(null);
+      img.src = URL.createObjectURL(file);
+      return;
+    }
+    if (ext === 'svg' || ext === 'dxf' || ext === 'plt') {
+      const fr = new FileReader();
+      fr.onload = () => {
+        try {
+          const c = document.createElement('canvas');
+          c.width = 360; c.height = 280;
+          if (ext === 'dxf') drawDxf(c, fr.result);
+          else if (ext === 'plt') drawPlt(c, fr.result);
+          else if (ext === 'svg') { drawSvg(c, fr.result); }
+          c.toBlob(b => resolve(b ? new File([b], 'auto_thumb.png', { type: 'image/png' }) : null), 'image/png');
+        } catch { resolve(null); }
+      };
+      fr.onerror = () => resolve(null);
+      fr.readAsText(file);
+      return;
+    }
+    resolve(null);
+  });
+}
+
+// ===================== BATCH UPLOAD =====================
+function openBatchModal() {
+  document.getElementById('batchFiles').value = '';
+  document.getElementById('batchPreview').innerHTML = '';
+  document.getElementById('bCategory').value = '';
+  document.getElementById('bMaterial').value = '';
+  document.getElementById('bThickness').value = '';
+  document.getElementById('bPassword').value = '';
+  fillUserMultiSelect('bPermitted');
+  batchFileList = [];
+  new bootstrap.Modal(document.getElementById('batchUploadModal')).show();
+}
+
+async function onBatchFilesChanged() {
+  const input = document.getElementById('batchFiles');
+  const preview = document.getElementById('batchPreview');
+  preview.innerHTML = '';
+  batchFileList = Array.from(input.files || []);
+  if (!batchFileList.length) return;
+
+  for (let i = 0; i < batchFileList.length; i++) {
+    const file = batchFileList[i];
+    const ext = (file.name || '').split('.').pop().toUpperCase();
+    const baseName = (file.name || '').replace(/\.[^.]+$/, '');
+    const IMAGE_EXTS = ['PNG','JPG','JPEG','GIF','WEBP','BMP'];
+    let thumbSrc = '';
+    if (IMAGE_EXTS.includes(ext)) {
+      thumbSrc = URL.createObjectURL(file);
+    } else if (['DXF','PLT','SVG'].includes(ext)) {
+      try {
+        const auto = await generateAutoThumbnail(file);
+        if (auto) thumbSrc = URL.createObjectURL(auto);
+      } catch {}
+    }
+
+    preview.innerHTML += `
+      <div class="col-12 col-sm-6 col-lg-4" data-idx="${i}">
+        <div class="card border h-100">
+          <div class="card-body p-2">
+            <div class="d-flex gap-2 mb-2">
+              <div style="width:60px;height:60px;min-width:60px;border-radius:4px;overflow:hidden;background:#f8f9fa;display:flex;align-items:center;justify-content:center">
+                ${thumbSrc ? `<img src="${thumbSrc}" style="width:100%;height:100%;object-fit:cover" alt="">` : `<span class="text-muted small">${ext}</span>`}
+              </div>
+              <div class="flex-grow-1">
+                <input type="text" class="form-control form-control-sm mb-1 batch-name" value="${baseName.replace(/"/g, '&quot;')}" placeholder="اسم التصميم">
+                <textarea class="form-control form-control-sm batch-notes" rows="2" placeholder="ملاحظات..."></textarea>
+              </div>
+            </div>
+            <div class="text-muted" style="font-size:.7rem">${file.name} • ${(file.size / 1024).toFixed(1)} KB</div>
+          </div>
+        </div>
+      </div>`;
+  }
+}
+
+async function uploadBatch() {
+  if (!batchFileList.length) { showToast('اختر ملفات أولاً', 'warning'); return; }
+  const btn = document.querySelector('#batchUploadModal .modal-footer .btn-success');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ الرفع...';
+
+  const fd = new FormData();
+  const items = [];
+  const rows = document.querySelectorAll('#batchPreview > div');
+
+  for (let i = 0; i < batchFileList.length; i++) {
+    const row = rows[i];
+    const nameInput = row?.querySelector('.batch-name');
+    const notesInput = row?.querySelector('.batch-notes');
+    const name = (nameInput?.value || batchFileList[i].name).trim();
+    if (!name) continue;
+    items.push({
+      Name: name,
+      Notes: notesInput?.value?.trim() || '',
+      Category: document.getElementById('bCategory').value.trim(),
+      Material: document.getElementById('bMaterial').value.trim(),
+      Thickness: document.getElementById('bThickness').value.trim(),
+      Password: document.getElementById('bPassword').value || ''
+    });
+    fd.append('files', batchFileList[i]);
+    try {
+      const autoThumb = await generateAutoThumbnail(batchFileList[i]);
+      if (autoThumb) fd.append('thumbs', autoThumb);
+    } catch {}
+  }
+
+  if (!items.length) { showToast('لا توجد ملفات صالحة', 'warning'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الكل'; return; }
+  fd.append('items', JSON.stringify(items));
+
+  try {
+    const res = await fetch('/api/designs/batch', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'فشل الرفع');
+
+    const permSel = document.getElementById('bPermitted');
+    if (permSel && permSel.selectedOptions.length > 0 && ![...permSel.selectedOptions].some(o => o.value === '__all__')) {
+      const permIds = [...permSel.selectedOptions].map(o => parseInt(o.value));
+      for (const did of (data.created || [])) {
+        await fetch(`/api/designs/${did}/permissions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userIds: permIds })
+        });
+      }
+    }
+
+    bootstrap.Modal.getInstance(document.getElementById('batchUploadModal')).hide();
+    showToast(`تم رفع ${data.count || 0} تصميم(ات) بنجاح`, 'success');
+    loadDesigns();
+  } catch (e) { showToast(e.message, 'danger'); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الكل'; }
 }
 
 // ===================== EDIT / DELETE =====================
@@ -236,11 +402,10 @@ async function openViewDesign(id) {
     content.classList.remove('d-none');
   }
   const modalEl = document.getElementById('viewDesignModal');
-  const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
   modalEl.addEventListener('shown.bs.modal', () => {
     if (!currentViewDesign.NeedsPassword) loadViewFile(currentViewDesign);
   }, { once: true });
-  modal.show();
+  bootstrap.Modal.getOrCreateInstance(modalEl).show();
 }
 
 function buildSpecs(d) {
@@ -263,34 +428,55 @@ async function loadViewFile(d) {
   const canvas = document.getElementById('viewerCanvas');
   const placeholder = document.getElementById('viewerPlaceholder');
   const modeBtn = document.getElementById('viewModeBtn');
+  const pdfFrame = document.getElementById('viewerPdf');
+  const IMG_EXTS = ['png','jpg','jpeg','gif','webp','bmp'];
+  const ext = extOf(d);
+
+  canvas.classList.add('d-none');
+  placeholder.classList.add('d-none');
+  if (pdfFrame) { pdfFrame.classList.add('d-none'); pdfFrame.src = ''; }
+  modeBtn.classList.add('d-none');
 
   try {
-    const ext = extOf(d);
-    let canRender = ['dxf', 'plt', 'svg'].includes(ext);
-    if (canRender) {
+    if (['dxf', 'plt', 'svg'].includes(ext)) {
       const res = await fetch(`/api/designs/${d.Design_ID}/file`);
       if (!res.ok) throw new Error('لا يمكن فتح الملف' + (res.status === 403 ? ' - لا تملك الصلاحية' : ''));
       const text = await res.text();
       canvas.classList.remove('d-none');
-      placeholder.classList.add('d-none');
       modeBtn.classList.remove('d-none');
-      modeBtn.style.display = '';
       if (ext === 'dxf') drawDxf(canvas, text);
       else if (ext === 'plt') drawPlt(canvas, text);
       else if (ext === 'svg') drawSvg(canvas, text);
-    } else {
-      canvas.classList.add('d-none');
+    } else if (ext === 'pdf' && pdfFrame) {
+      pdfFrame.classList.remove('d-none');
+      pdfFrame.src = `/api/designs/${d.Design_ID}/file`;
+    } else if (IMG_EXTS.includes(ext)) {
       placeholder.classList.remove('d-none');
-      modeBtn.classList.add('d-none');
       const img = document.getElementById('viewThumbImg');
       img.onerror = () => { img.style.display = 'none'; };
       img.onload = () => { img.style.display = ''; };
-      document.getElementById('viewThumbImg').src = d.ThumbnailPath ? `/api/designs/${d.Design_ID}/thumbnail` : '';
+      img.src = `/api/designs/${d.Design_ID}/file`;
+    } else {
+      placeholder.classList.remove('d-none');
+      const img = document.getElementById('viewThumbImg');
+      if (d.ThumbnailPath) {
+        img.onerror = () => { img.style.display = 'none'; };
+        img.onload = () => { img.style.display = ''; };
+        img.src = `/api/designs/${d.Design_ID}/thumbnail`;
+      } else {
+        img.style.display = 'none';
+      }
     }
   } catch (e) {
-    canvas.classList.add('d-none');
     placeholder.classList.remove('d-none');
-    document.getElementById('viewThumbImg').src = d.ThumbnailPath ? `/api/designs/${d.Design_ID}/thumbnail` : '';
+    const img = document.getElementById('viewThumbImg');
+    if (d.ThumbnailPath) {
+      img.onerror = () => { img.style.display = 'none'; };
+      img.onload = () => { img.style.display = ''; };
+      img.src = `/api/designs/${d.Design_ID}/thumbnail`;
+    } else {
+      img.style.display = 'none';
+    }
     document.querySelector('#viewerPlaceholder .text-muted').innerHTML = `<i class="bi bi-info-circle"></i> ${e.message}. يمكنك تحميل الملف لعرضه في برنامج التصميم.`;
   }
 }
@@ -326,6 +512,91 @@ async function verifyDesignPassword() {
   loadViewFile(currentViewDesign);
 }
 
+// ===================== ADD TO ORDER =====================
+function openAddToOrderModal() {
+  if (!currentViewDesign) return;
+  aotDesignId = currentViewDesign.Design_ID;
+  aotSelectedClient = null;
+  document.getElementById('aotDesignInfo').innerHTML = `<i class="bi bi-file-earmark"></i> <strong>${currentViewDesign.Name}</strong> <span class="text-muted">(${currentViewDesign.Original_Name || ''})</span>`;
+  document.getElementById('aotSearch').value = '';
+  document.getElementById('aotClientsList').classList.add('d-none');
+  document.getElementById('aotClientsList').innerHTML = '';
+  document.getElementById('aotOrdersSection').classList.add('d-none');
+  document.getElementById('aotOrderSelect').innerHTML = '<option value="">- إنشاء طلب جديد -</option>';
+  document.getElementById('aotNewOrderWrap').classList.add('d-none');
+  document.getElementById('aotSubmit').disabled = true;
+  new bootstrap.Modal(document.getElementById('addToOrderModal')).show();
+}
+
+function debounceAotSearch() {
+  clearTimeout(aotSearchTimer);
+  aotSearchTimer = setTimeout(searchAotClients, 300);
+}
+
+async function searchAotClients() {
+  const q = (document.getElementById('aotSearch').value || '').trim();
+  const list = document.getElementById('aotClientsList');
+  if (!q) { list.classList.add('d-none'); return; }
+  try {
+    const res = await fetch('/api/clients/all?search=' + encodeURIComponent(q));
+    if (!res.ok) return;
+    const clients = await res.json();
+    list.classList.remove('d-none');
+    list.innerHTML = clients.map(c => `
+      <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+        onclick="selectAotClient(${c.Client_ID}, '${(c.Full_Name || '').replace(/'/g, "\\'")}')">
+        <span>${c.Full_Name}</span>
+        <small class="text-muted">${c.Phone_Number || ''}</small>
+      </button>`).join('') || '<div class="list-group-item text-muted small">لا يوجد زبائن مطابقين</div>';
+  } catch {}
+}
+
+async function selectAotClient(clientId, name) {
+  aotSelectedClient = clientId;
+  document.getElementById('aotClientsList').innerHTML = `<div class="list-group-item list-group-item-active bg-info text-white"><i class="bi bi-person-check"></i> ${name}</div>`;
+  const section = document.getElementById('aotOrdersSection');
+  section.classList.remove('d-none');
+  const sel = document.getElementById('aotOrderSelect');
+  sel.innerHTML = '<option value="">- إنشاء طلب جديد -</option>';
+  try {
+    const res = await fetch(`/api/clients/${clientId}/orders`);
+    if (!res.ok) return;
+    const orders = await res.json();
+    orders.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.Task_ID;
+      opt.textContent = `#${o.Task_ID} - ${o.Status} - ${o.Materials_List || 'بدون خامة'}`;
+      sel.appendChild(opt);
+    });
+    document.getElementById('aotNewOrderWrap').classList.toggle('d-none', orders.length > 0);
+  } catch {}
+  document.getElementById('aotSubmit').disabled = false;
+}
+
+async function submitAddToOrder() {
+  if (!aotDesignId || !aotSelectedClient) return;
+  const btn = document.getElementById('aotSubmit');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  const body = { Client_ID: aotSelectedClient };
+  const taskId = document.getElementById('aotOrderSelect').value;
+  if (taskId) body.Task_ID = parseInt(taskId, 10);
+  else body.Machine_Type = document.getElementById('aotMachine').value;
+
+  try {
+    const res = await fetch(`/api/designs/${aotDesignId}/add-to-order`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'فشل الإضافة');
+    bootstrap.Modal.getInstance(document.getElementById('addToOrderModal')).hide();
+    showToast(`تم إضافة التصميم إلى الطلب #${data.Task_ID} - ${data.Client_Name}`, 'success');
+  } catch (e) { showToast(e.message, 'danger'); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i> إضافة'; }
+}
+
+// ===================== TOAST =====================
 function showToast(msg, type = 'info') {
   let c = document.getElementById('toastContainer');
   if (!c) { c = document.createElement('div'); c.id = 'toastContainer'; c.style.cssText = 'position:fixed;top:20px;left:20px;z-index:9999'; document.body.appendChild(c); }
@@ -463,7 +734,7 @@ function drawDxf(canvas, text) {
       ctx.beginPath(); ctx.arc(c[0], c[1], s.r * scale, end, start, true); ctx.stroke();
     } else if (s.kind === 'text') {
       const [p] = tx(s.x, s.y);
-      ctx.fillStyle = '#212529'; ctx.font = `${Math.max(11, s.r * scale || 12)}px sans-serif`;
+      ctx.fillStyle = '#212529'; ctx.font = `${Math.max(11, scale || 12)}px sans-serif`;
       ctx.fillText(s.label, p[0], p[1]);
     }
   });

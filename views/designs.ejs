@@ -38,6 +38,7 @@
       <div class="d-flex gap-2 flex-wrap">
         <% if (user.role === 'Admin' || (user.permissions && user.permissions.admin)) { %>
           <button class="btn btn-success" onclick="openUploadModal()"><i class="bi bi-upload"></i> رفع تصميم جديد</button>
+          <button class="btn btn-outline-success" onclick="openBatchModal()"><i class="bi bi-files"></i> رفع عدة ملفات</button>
         <% } %>
       </div>
     </div>
@@ -123,13 +124,13 @@
                 <textarea id="dNotes" class="form-control" rows="2" placeholder="المواصفات، طريقة التركيب، الملاحظات..."></textarea>
               </div>
               <div class="col-md-6">
-                <label class="form-label">ملف التصميم (DXF / CDR / PLT / AI) <span class="text-danger">*</span></label>
-                <input type="file" id="dFile" class="form-control" accept=".dxf,.cdr,.plt,.ai,.svg,.pdf,.eps" required>
-                <div class="form-text">يدعم: DXF , CDR , PLT , AI</div>
+                <label class="form-label">ملف التصميم <span class="text-danger">*</span></label>
+                <input type="file" id="dFile" class="form-control" accept=".dxf,.cdr,.plt,.ai,.svg,.pdf,.eps,.png,.jpg,.jpeg,.gif,.webp,.bmp,.txt" required>
+                <div class="form-text">يدعم: DXF , CDR , PLT , AI , SVG , PDF , صور... يُعرض داخل الموقع مهما كان الامتداد</div>
               </div>
               <div class="col-md-6">
-                <label class="form-label">صورة مميزة (لتمييز الملف) <span class="text-danger">*</span></label>
-                <input type="file" id="dThumb" class="form-control" accept="image/*" required>
+                <label class="form-label">صورة مميزة (اختياري - تُولَّد تلقائياً إن تركتها فارغة)</label>
+                <input type="file" id="dThumb" class="form-control" accept="image/*">
                 <div class="form-text">صورة توضح شكل التصميم</div>
               </div>
               <div class="col-md-6">
@@ -150,6 +151,59 @@
         <div class="modal-footer">
           <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
           <button class="btn btn-primary" onclick="uploadDesign()"><i class="bi bi-cloud-upload"></i> رفع</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Upload Modal -->
+  <div class="modal fade" id="batchUploadModal">
+    <div class="modal-dialog modal-xl">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white">
+          <h5 class="modal-title"><i class="bi bi-files"></i> رفع عدة تصاميم دفعة واحدة</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted small"><i class="bi bi-lightbulb"></i> اختر عدة ملفات (أي امتداد)، يتم توليد معاينة تلقائية لكل ملف داخل الموقع، ودوّن ملاحظات لكل تصميم.</p>
+          <div class="mb-3">
+            <label class="form-label">الملفات <span class="text-danger">*</span></label>
+            <input type="file" id="batchFiles" class="form-control" multiple
+              accept=".dxf,.cdr,.plt,.ai,.svg,.pdf,.eps,.png,.jpg,.jpeg,.gif,.webp,.bmp,.txt">
+            <div class="form-text">يمكنك اختيار أكثر من ملف بامتدادات مختلفة</div>
+          </div>
+          <div id="batchPreview" class="row g-2"></div>
+          <hr>
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label">التصنيف (لكل الملفات)</label>
+              <input type="text" id="bCategory" class="form-control" list="categoryList" placeholder="مثال: ديكور، أثاث...">
+              <datalist id="categoryList2"></datalist>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">الخامة</label>
+              <input type="text" id="bMaterial" class="form-control" placeholder="مثال: خشب MDF">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">السمك</label>
+              <input type="text" id="bThickness" class="form-control" placeholder="مثال: 3 مم">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">كلمة مرور للملفات (اختياري)</label>
+              <input type="text" id="bPassword" class="form-control" placeholder="اتركه فارغاً بدون حماية">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">من يمكنه استخدامها</label>
+              <select id="bPermitted" class="form-select" multiple size="2">
+                <option value="__all__">جميع المستخدمين</option>
+              </select>
+              <div class="form-text">Ctrl للتحديد المتعدد</div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-success" onclick="uploadBatch()"><i class="bi bi-cloud-upload"></i> رفع الكل</button>
         </div>
       </div>
     </div>
@@ -265,10 +319,12 @@
                 </div>
               </div>
               <canvas id="viewerCanvas" class="d-none" height="400"></canvas>
+              <iframe id="viewerPdf" class="d-none mx-auto" style="width:100%;max-width:700px;height:480px;border:1px solid #dee2e6;border-radius:6px;background:#fff"></iframe>
             </div>
           </div>
         </div>
         <div class="modal-footer">
+          <button class="btn btn-outline-success btn-sm" onclick="openAddToOrderModal()"><i class="bi bi-file-earmark-plus"></i> إضافة لطلب زبون</button>
           <% if (user.role === 'Admin' || (user.permissions && user.permissions.admin)) { %>
             <button class="btn btn-warning btn-sm" onclick="openEditDesignFromView()"><i class="bi bi-pencil"></i> تعديل</button>
           <% } %>
@@ -281,6 +337,47 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/designs.js"></script>
+
+  <!-- Add to Client Order Modal -->
+  <div class="modal fade" id="addToOrderModal">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-info text-white">
+          <h5 class="modal-title"><i class="bi bi-file-earmark-plus"></i> إضافة التصميم لطلب زبون</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div id="aotDesignInfo" class="alert alert-info py-2 mb-3"></div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">ابحث عن الزبون</label>
+            <div class="input-group">
+              <input type="text" id="aotSearch" class="form-control" placeholder="اسم الزبون أو رقم الهاتف..." oninput="debounceAotSearch()">
+              <button class="btn btn-outline-info" onclick="searchAotClients()"><i class="bi bi-search"></i></button>
+            </div>
+          </div>
+          <div id="aotClientsList" class="list-group mb-3 d-none"></div>
+          <div id="aotOrdersSection" class="d-none">
+            <label class="form-label fw-bold">اختر الطلب</label>
+            <select id="aotOrderSelect" class="form-select mb-2">
+              <option value="">- إنشاء طلب جديد -</option>
+            </select>
+            <div id="aotNewOrderWrap" class="d-none">
+              <label class="form-label">نوع الماكينة</label>
+              <select id="aotMachine" class="form-select">
+                <option value="Laser">ليزر</option>
+                <option value="Router">راوتر</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-info" id="aotSubmit" onclick="submitAddToOrder()" disabled><i class="bi bi-check-lg"></i> إضافة</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
 </body>
 </html>

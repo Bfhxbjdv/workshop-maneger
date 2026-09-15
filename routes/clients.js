@@ -41,14 +41,15 @@ router.get('/:id', requireAuth(), (req, res) => {
 
 router.get('/:id/orders', requireAuth(), (req, res) => {
   const orders = db.all(`
-    SELECT o.*, 
+    SELECT o.*,
       CASE WHEN EXISTS(SELECT 1 FROM Order_Materials WHERE Task_ID=o.Task_ID)
-        THEN (SELECT GROUP_CONCAT(i.Material_Name || ' (' || om.Quantity || ')', ', ') 
-              FROM Order_Materials om LEFT JOIN Inventory i ON om.Material_ID=i.Material_ID 
+        THEN (SELECT GROUP_CONCAT(i.Material_Name || ' (' || om.Quantity || ')', ', ')
+              FROM Order_Materials om LEFT JOIN Inventory i ON om.Material_ID=i.Material_ID
               WHERE om.Task_ID=o.Task_ID)
-        ELSE o.Material_Name || CASE WHEN o.Material_Qty>0 THEN ' (' || o.Material_Qty || ')' ELSE '' END
+        ELSE i.Material_Name || CASE WHEN o.Material_Qty>0 THEN ' (' || o.Material_Qty || ')' ELSE '' END
       END as Materials_List
     FROM Orders o
+    LEFT JOIN Inventory i ON o.Material_ID = i.Material_ID
     WHERE o.Client_ID = ? ORDER BY o.Created_At DESC
   `, [req.params.id]);
   res.json(orders);
