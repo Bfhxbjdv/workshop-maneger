@@ -307,7 +307,7 @@
             <div class="row mb-3" id="viewSpecs"></div>
             <div class="text-center">
               <div class="d-flex justify-content-center gap-2 mb-2 flex-wrap">
-                <a id="viewDownloadBtn" class="btn btn-outline-primary btn-sm" download><i class="bi bi-download"></i> تحميل الملف</a>
+                <button class="btn btn-outline-primary btn-sm" onclick="downloadDesignFile(currentViewDesign.Design_ID, currentViewDesign.Original_Name)"><i class="bi bi-download"></i> تحميل الملف</button>
                 <button class="btn btn-outline-secondary btn-sm" onclick="togglePreviewMode()" id="viewModeBtn"><i class="bi bi-card-image"></i> عرض الصورة</button>
               </div>
               <div id="viewerPlaceholder" class="d-none">
@@ -320,6 +320,7 @@
               </div>
               <canvas id="viewerCanvas" class="d-none" height="400"></canvas>
               <iframe id="viewerPdf" class="d-none mx-auto" style="width:100%;max-width:700px;height:480px;border:1px solid #dee2e6;border-radius:6px;background:#fff"></iframe>
+              <pre id="viewerText" class="d-none mx-auto text-start" style="width:100%;max-width:700px;height:400px;overflow:auto;border:1px solid #dee2e6;border-radius:6px;background:#fff;padding:12px;font-size:.8rem;font-family:monospace"></pre>
             </div>
           </div>
         </div>

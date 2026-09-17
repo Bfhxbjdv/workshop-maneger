@@ -98,7 +98,7 @@ function designCard(d) {
         </div>
         <div class="lock-badge d-flex gap-1">
           ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
-          <a href="/api/designs/${d.Design_ID}/download" class="badge bg-primary text-decoration-none" title="تحميل" onclick="event.stopPropagation()"><i class="bi bi-download"></i></a>
+          <a href="#" class="badge bg-primary text-decoration-none" title="تحميل" onclick="event.stopPropagation(); downloadDesignFile(${d.Design_ID}, '${String(d.Original_Name || 'design_' + d.Design_ID).replace(/'/g, "\\'")}'); return false;"><i class="bi bi-download"></i></a>
         </div>
         ${(needsAdmin && permCount > 0) ? `<span class="badge bg-info thumb-badge"><i class="bi bi-people"></i> ${permCount}</span>` : ''}
       </div>
@@ -425,20 +425,60 @@ function buildSpecs(d) {
 
 function extOf(d) { return (d.Original_Name || '').split('.').pop().toLowerCase(); }
 
+async function downloadDesignFile(id, name) {
+  try {
+    const res = await fetch(`/api/designs/${id}/download`);
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      showToast(j.error || 'لا يمكن تحميل هذا الملف', 'danger');
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name || `design_${id}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) {
+    showToast('فشل التحميل: ' + e.message, 'danger');
+  }
+}
+
 async function loadViewFile(d) {
   previewMode = 'auto';
-  document.getElementById('viewDownloadBtn').href = `/api/designs/${d.Design_ID}/download`;
   const canvas = document.getElementById('viewerCanvas');
   const placeholder = document.getElementById('viewerPlaceholder');
   const modeBtn = document.getElementById('viewModeBtn');
   const pdfFrame = document.getElementById('viewerPdf');
+  const textPre = document.getElementById('viewerText');
   const IMG_EXTS = ['png','jpg','jpeg','gif','webp','bmp'];
   const ext = extOf(d);
 
-  canvas.classList.add('d-none');
-  placeholder.classList.add('d-none');
-  if (pdfFrame) { pdfFrame.classList.add('d-none'); pdfFrame.src = ''; }
-  modeBtn.classList.add('d-none');
+  const hideAll = () => {
+    canvas.classList.add('d-none');
+    placeholder.classList.add('d-none');
+    if (pdfFrame) { pdfFrame.classList.add('d-none'); pdfFrame.src = ''; }
+    if (textPre) { textPre.classList.add('d-none'); textPre.textContent = ''; }
+    modeBtn.classList.add('d-none');
+  };
+  hideAll();
+
+  const showThumb = (msg) => {
+    placeholder.classList.remove('d-none');
+    const img = document.getElementById('viewThumbImg');
+    if (d.ThumbnailPath) {
+      img.onerror = () => { img.style.display = 'none'; };
+      img.onload = () => { img.style.display = ''; };
+      img.src = `/api/designs/${d.Design_ID}/thumbnail`;
+    } else {
+      img.style.display = 'none';
+    }
+    const note = document.querySelector('#viewerPlaceholder .text-muted');
+    if (note && msg) note.innerHTML = `<i class="bi bi-info-circle"></i> ${msg}`;
+  };
 
   try {
     if (['dxf', 'plt', 'svg'].includes(ext)) {
@@ -459,28 +499,41 @@ async function loadViewFile(d) {
       img.onerror = () => { img.style.display = 'none'; };
       img.onload = () => { img.style.display = ''; };
       img.src = `/api/designs/${d.Design_ID}/file`;
-    } else {
-      placeholder.classList.remove('d-none');
-      const img = document.getElementById('viewThumbImg');
-      if (d.ThumbnailPath) {
-        img.onerror = () => { img.style.display = 'none'; };
-        img.onload = () => { img.style.display = ''; };
-        img.src = `/api/designs/${d.Design_ID}/thumbnail`;
+    } else if (ext === 'txt' && textPre) {
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`);
+      if (!res.ok) throw new Error('لا يمكن فتح الملف');
+      textPre.textContent = await res.text();
+      textPre.classList.remove('d-none');
+    } else if (['ai', 'eps', 'cdr'].includes(ext)) {
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`);
+      if (!res.ok) throw new Error('لا يمكن فتح الملف');
+      const buf = new Uint8Array(await res.arrayBuffer());
+      const head = new TextDecoder('utf-8', { fatal: false }).decode(buf.subarray(0, Math.min(4096, buf.length)));
+      const headTrim = head.replace(/^\uFEFF/, '').trimStart();
+      const lower = headTrim.toLowerCase();
+
+      if (lower.startsWith('%pdf') || headTrim.startsWith('%PDF-')) {
+        // AI often saved as PDF-compatible
+        const blob = new Blob([buf], { type: 'application/pdf' });
+        pdfFrame.src = URL.createObjectURL(blob);
+        pdfFrame.classList.remove('d-none');
+      } else if (lower.includes('<svg') || lower.startsWith('<?xml') || lower.includes('<svg ')) {
+        canvas.classList.remove('d-none');
+        drawSvg(canvas, new TextDecoder().decode(buf));
+      } else if (headTrim.startsWith('%!ps') || headTrim.startsWith('%!PS')) {
+        // EPS / PostScript - try parsing basic vector commands on canvas
+        canvas.classList.remove('d-none');
+        drawPlt(canvas, new TextDecoder().decode(buf));
       } else {
-        img.style.display = 'none';
+        throw new Error('هذا النوع لا يُعرض هنا تلقائياً');
       }
+    } else {
+      throw new Error('هذا النوع لا يُعرض هنا تلقائياً');
     }
   } catch (e) {
-    placeholder.classList.remove('d-none');
-    const img = document.getElementById('viewThumbImg');
-    if (d.ThumbnailPath) {
-      img.onerror = () => { img.style.display = 'none'; };
-      img.onload = () => { img.style.display = ''; };
-      img.src = `/api/designs/${d.Design_ID}/thumbnail`;
-    } else {
-      img.style.display = 'none';
-    }
-    document.querySelector('#viewerPlaceholder .text-muted').innerHTML = `<i class="bi bi-info-circle"></i> ${e.message}. يمكنك تحميل الملف لعرضه في برنامج التصميم.`;
+    showThumb(e.message === 'هذا النوع لا يُعرض هنا تلقائياً'
+      ? 'هذا النوع من الملفات يُعرض هنا كصورة مميزة. لاستعراض النسخة الأصلية استخدم زر التحميل.'
+      : e.message + '. يمكنك تحميل الملف وعرضه في برنامج التصميم.');
   }
 }
 
