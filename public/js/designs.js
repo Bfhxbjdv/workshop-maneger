@@ -49,7 +49,7 @@ async function loadDesigns() {
   const grid = document.getElementById('designsGrid');
   grid.innerHTML = `<div class="col-12 text-center text-muted py-5"><div class="spinner-border"></div></div>`;
   try {
-    const res = await fetch('/api/designs');
+    const res = await fetch('/api/designs', { cache: 'no-store' });
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (!res.ok) throw new Error((await res.json()).error);
     allDesigns = await res.json();
@@ -98,7 +98,7 @@ function designCard(d) {
         </div>
         <div class="lock-badge d-flex gap-1">
           ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
-          <a href="#" class="badge bg-primary text-decoration-none" title="تحميل" onclick="event.stopPropagation(); downloadDesignFile(${d.Design_ID}, '${String(d.Original_Name || 'design_' + d.Design_ID).replace(/'/g, "\\'")}'); return false;"><i class="bi bi-download"></i></a>
+          <a href="javascript:void(0)" class="badge bg-primary text-decoration-none" title="تحميل" onclick="event.stopPropagation(); event.preventDefault(); downloadDesignFile(${d.Design_ID}, '${String(d.Original_Name || 'design_' + d.Design_ID).replace(/'/g, "\\'")}');"><i class="bi bi-download"></i></a>
         </div>
         ${(needsAdmin && permCount > 0) ? `<span class="badge bg-info thumb-badge"><i class="bi bi-people"></i> ${permCount}</span>` : ''}
       </div>
@@ -141,22 +141,29 @@ async function uploadDesign() {
 
   const btn = document.querySelector('#uploadDesignModal .modal-footer .btn-primary');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ الرفع...';
+  let uploaded = false;
   try {
     const res = await fetch('/api/designs', { method: 'POST', body: fd });
-    const data = await res.json();
+    let data = {};
+    try { data = await res.json(); } catch {}
     if (!res.ok) throw new Error(data.error || 'فشل الرفع');
+    uploaded = true;
     const sel = document.getElementById('dPermitted');
     if (sel && sel.selectedOptions.length > 0 && ![...sel.selectedOptions].some(o => o.value === '__all__')) {
-      await fetch(`/api/designs/${data.Design_ID}/permissions`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userIds: [...sel.selectedOptions].map(o => parseInt(o.value)) })
-      });
+      try {
+        await fetch(`/api/designs/${data.Design_ID}/permissions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userIds: [...sel.selectedOptions].map(o => parseInt(o.value)) })
+        });
+      } catch {}
     }
-    bootstrap.Modal.getInstance(document.getElementById('uploadDesignModal')).hide();
+    try { bootstrap.Modal.getInstance(document.getElementById('uploadDesignModal'))?.hide(); } catch {}
     showToast('تم رفع التصميم بنجاح', 'success');
-    loadDesigns();
   } catch (e) { showToast(e.message, 'danger'); }
-  finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع'; }
+  finally {
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع';
+    if (uploaded) loadDesigns();
+  }
 }
 
 // ===================== AUTO-THUMBNAIL GENERATION =====================
@@ -290,25 +297,30 @@ async function uploadBatch() {
 
   try {
     const res = await fetch('/api/designs/batch', { method: 'POST', body: fd });
-    const data = await res.json();
+    let data = {};
+    try { data = await res.json(); } catch {}
     if (!res.ok) throw new Error(data.error || 'فشل الرفع');
 
     const permSel = document.getElementById('bPermitted');
     if (permSel && permSel.selectedOptions.length > 0 && ![...permSel.selectedOptions].some(o => o.value === '__all__')) {
       const permIds = [...permSel.selectedOptions].map(o => parseInt(o.value));
       for (const did of (data.created || [])) {
-        await fetch(`/api/designs/${did}/permissions`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userIds: permIds })
-        });
+        try {
+          await fetch(`/api/designs/${did}/permissions`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userIds: permIds })
+          });
+        } catch {}
       }
     }
 
-    bootstrap.Modal.getInstance(document.getElementById('batchUploadModal')).hide();
+    try { bootstrap.Modal.getInstance(document.getElementById('batchUploadModal'))?.hide(); } catch {}
     showToast(`تم رفع ${data.count || 0} تصميم(ات) بنجاح`, 'success');
-    loadDesigns();
   } catch (e) { showToast(e.message, 'danger'); }
-  finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الكل'; }
+  finally {
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الكل';
+    loadDesigns();
+  }
 }
 
 // ===================== EDIT / DELETE =====================
@@ -808,44 +820,76 @@ function drawDxf(canvas, text) {
 // ===================== PLT (HPGL) RENDERER =====================
 function drawPlt(canvas, text) {
   const ctx = canvas.getContext('2d');
-  const W = canvas.clientWidth || canvas.width;
-  const H = 400;
+  const W = canvas.clientWidth || canvas.width || 400;
+  const H = canvas.clientHeight || 400;
   canvas.width = W; canvas.height = H;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
 
-  const cmds = text.match(/[A-Z]{2}[^;]*/g) || [];
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const segs = [];
-  let penDown = false; let cur = null;
-  const handle = (x, y) => {
+  let cur = null;
+  let penDown = false;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+  const handle = (x, y, draw) => {
     if (!isFinite(x) || !isFinite(y)) return;
-    if (penDown && cur) segs.push([cur, [x, y]]);
-    cur = [x, y];
+    const p = [x, y];
+    if (draw && penDown && cur) segs.push([cur, p]);
+    cur = p;
     minX = Math.min(minX, x); maxX = Math.max(maxX, x);
     minY = Math.min(minY, y); maxY = Math.max(maxY, y);
   };
-  cmds.forEach(c => {
-    const op = c.substring(0, 2);
-    const args = c.substring(2).split(',').map(s => parseFloat(s)).filter(n => isFinite(n));
-    if (op === 'PU') penDown = false;
-    else if (op === 'PD') penDown = true;
-    else if (op === 'PA') { for (let i = 0; i + 1 < args.length; i += 2) handle(args[i], args[i + 1]); }
-    else if (op === 'PR') { if (cur) for (let i = 0; i + 1 < args.length; i += 2) handle(cur[0] + args[i], cur[1] + args[i + 1]); }
-    else if (op === 'SP') { /* pen select */ }
-  });
-  if (!isFinite(minX)) { ctx.fillStyle = '#adb5bd'; ctx.fillText('لا توجد عناصر قابلة للعرض', W / 2 - 60, H / 2); return; }
+
+  const parts = String(text || '').split(';');
+  for (const seg of parts) {
+    const m = seg.trim().match(/^([A-Z]{2})\s*(.*)$/);
+    if (!m) continue;
+    const op = m[1];
+    const nums = (m[2] || '').match(/-?\d+(?:\.\d+)?/g);
+    if (!nums) {
+      if (op === 'PU') penDown = false;
+      else if (op === 'PD') penDown = true;
+      continue;
+    }
+    const vals = nums.map(Number);
+    if (op === 'PU') {
+      penDown = false;
+      for (let i = 0; i + 1 < vals.length; i += 2) handle(vals[i], vals[i + 1], false);
+    } else if (op === 'PD') {
+      penDown = true;
+      for (let i = 0; i + 1 < vals.length; i += 2) handle(vals[i], vals[i + 1], true);
+    } else if (op === 'PA' || op === 'PC') {
+      penDown = true;
+      for (let i = 0; i + 1 < vals.length; i += 2) handle(vals[i], vals[i + 1], true);
+    } else if (op === 'PR') {
+      penDown = true;
+      if (!cur) continue;
+      for (let i = 0; i + 1 < vals.length; i += 2) handle(cur[0] + vals[i], cur[1] + vals[i + 1], true);
+    }
+  }
+
+  if (!isFinite(minX) || segs.length === 0) {
+    ctx.fillStyle = '#adb5bd';
+    ctx.font = '15px sans-serif';
+    ctx.fillText('لا توجد عناصر قابلة للعرض', W / 2 - 70, H / 2);
+    return;
+  }
   const pad = 30;
-  const rangeX = (maxX - minX) || 1, rangeY = (maxY - minY) || 1;
+  const rangeX = (maxX - minX) || 1;
+  const rangeY = (maxY - minY) || 1;
   const scale = Math.min((W - pad * 2) / rangeX, (H - pad * 2) / rangeY);
-  const offX = (W - rangeX * scale) / 2, offY = (H - rangeY * scale) / 2;
-  ctx.strokeStyle = '#212529'; ctx.lineWidth = 1.5;
+  const offX = (W - rangeX * scale) / 2;
+  const offY = (H - rangeY * scale) / 2;
+  const tx = (x, y) => [offX + (x - minX) * scale, H - (offY + (y - minY) * scale)];
+
+  ctx.strokeStyle = '#212529'; ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath();
   segs.forEach(([a, b]) => {
-    ctx.beginPath();
-    ctx.moveTo(offX + (a[0] - minX) * scale, H - (offY + (a[1] - minY) * scale));
-    ctx.lineTo(offX + (b[0] - minX) * scale, H - (offY + (b[1] - minY) * scale));
-    ctx.stroke();
+    const p1 = tx(a[0], a[1]), p2 = tx(b[0], b[1]);
+    ctx.moveTo(p1[0], p1[1]);
+    ctx.lineTo(p2[0], p2[1]);
   });
+  ctx.stroke();
 }
 
 // ===================== SVG RENDERER =====================

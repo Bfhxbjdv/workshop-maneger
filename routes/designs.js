@@ -20,6 +20,13 @@ const MIME_MAP = {
 };
 function mimeFor(origName) { return MIME_MAP[(path.extname(origName || '')).toLowerCase()] || 'application/octet-stream'; }
 
+// Never let the browser cache design JSON/streams, otherwise freshly-uploaded
+// designs stay invisible until a hard refresh.
+router.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  next();
+});
+
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d; }
 
 // ---------- helper: design with permission visibility ----------
@@ -236,7 +243,7 @@ router.get('/:id/file', requireAuth(), (req, res) => {
   const fp = path.join(STORAGE, d.FilePath);
   if (!fs.existsSync(fp)) return res.status(404).json({ error: 'الملف غير موجود' });
   const ext = path.extname(d.Original_Name || '').toLowerCase();
-  const inline = ['.png','.jpg','.jpeg','.gif','.webp','.bmp','.svg','.pdf','.txt','.dxf'].includes(ext);
+  const inline = ['.png','.jpg','.jpeg','.gif','.webp','.bmp','.svg','.pdf','.txt','.dxf','.plt'].includes(ext);
   res.setHeader('Content-Type', mimeFor(d.Original_Name));
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${d.Original_Name}"`);
   if (inline) res.setHeader('Access-Control-Allow-Origin', '*');
