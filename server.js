@@ -28,6 +28,12 @@ const server = http.createServer(app);
 const io = new Server(server);
 global.io = io;
 
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret || sessionSecret.length < 24 || sessionSecret === 'workshop-secret-key-2024') {
+  throw new Error('SESSION_SECRET يجب أن يكون مضبوطاً وعشوائياً بطول 24 حرفاً على الأقل');
+}
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -42,20 +48,16 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'workshop-secret-key-2024',
+  secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: {
     maxAge: 24 * 60 * 60 * 1000,
-    secure: process.env.COOKIE_SECURE === 'true',
+    secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'lax'
   }
 }));
-
-if (process.env.TRUST_PROXY === '1') {
-  app.set('trust proxy', 1);
-}
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -199,13 +201,17 @@ const PORT = process.env.PORT || 3000;
 initDatabase().then(() => {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 النظام يعمل على: http://localhost:${PORT}`);
-    console.log(`👤 حسابات مبدئية:`);
-    console.log(`   مدير: admin / admin123`);
-    console.log(`   مصمم: designer / designer123`);
-    console.log(`   ليزر: laser / laser123`);
-    console.log(`   راوتر: router / router123`);
   });
 }).catch(err => {
   console.error('❌ فشل تهيئة قاعدة البيانات:', err);
+  process.exit(1);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ المنفذ ${PORT} مستخدم بالفعل. أوقف النسخة الأخرى أو غيّر PORT.`);
+  } else {
+    console.error('❌ تعذر تشغيل الخادم:', err.message);
+  }
   process.exit(1);
 });

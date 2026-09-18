@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { ZipArchive } = require('archiver');
 const db = require('../database/connection');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, canAccessOrder } = require('../middleware/auth');
 const gdrive = require('../services/googleDrive');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
@@ -13,9 +13,16 @@ if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
 
 const upload = multer({
   dest: path.join(__dirname, '..', 'uploads'),
-  limits: { fileSize: 100 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => { cb(null, true); }
+  limits: { fileSize: 25 * 1024 * 1024, files: 10, fields: 20 },
+  fileFilter: (req, file, cb) => {
+    const allowed = new Set(['.dxf', '.plt', '.svg', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.ai', '.eps', '.cdr', '.txt']);
+    cb(null, allowed.has(path.extname(file.originalname || '').toLowerCase()));
+  }
 });
+
+function safeFileName(name) {
+  return path.basename(String(name || 'file')).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/^\.+/, '') || 'file';
+}
 
 function ensureClientDir(clientName) {
   const safe = clientName.replace(/[<>:"\/\\|?*]/g, '_').trim();
@@ -58,6 +65,7 @@ router.post('/upload/:taskId', requirePermission('orders'), upload.array('files'
     const taskId = req.params.taskId;
     const order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [taskId]);
     if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+    if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
     if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'لم يتم اختيار ملفات' });
 
     let materials = [];
@@ -83,8 +91,7 @@ router.post('/upload/:taskId', requirePermission('orders'), upload.array('files'
 
     for (let i = 0; i < req.files.length; i++) {
       const file = req.files[i];
-      const ext = path.extname(file.originalname);
-      const storedName = `TaskID_${taskId}_${file.originalname}`;
+      const storedName = `TaskID_${taskId}_${Date.now()}_${safeFileName(file.originalname)}`;
       const localPath = path.join(taskDir, storedName);
       fs.renameSync(file.path, localPath);
 
@@ -150,6 +157,7 @@ router.post('/upload-image/:taskId', requirePermission('orders'), upload.array('
     const taskId = req.params.taskId;
     const order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [taskId]);
     if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+    if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
     if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'لم يتم اختيار صورة' });
 
     const clientDir = ensureClientDir(order.Client_Name || `client_${order.Client_ID}`);
@@ -159,7 +167,7 @@ router.post('/upload-image/:taskId', requirePermission('orders'), upload.array('
     const uploaded = [];
 
     for (const imgFile of req.files) {
-      const storedName = `TaskID_${taskId}_IMG_${Date.now()}_${imgFile.originalname}`;
+      const storedName = `TaskID_${taskId}_IMG_${Date.now()}_${safeFileName(imgFile.originalname)}`;
       const localPath = path.join(taskDir, storedName);
       fs.renameSync(imgFile.path, localPath);
 
@@ -203,6 +211,7 @@ router.post('/copy/:taskId', requirePermission('orders'), async (req, res) => {
 
     const order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [taskId]);
     if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+    if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
     const clientDir = ensureClientDir(order.Client_Name || `client_${order.Client_ID}`);
     const dateDir = ensureDateDir(clientDir);
@@ -212,11 +221,13 @@ router.post('/copy/:taskId', requirePermission('orders'), async (req, res) => {
     for (const fileId of fileIds) {
       const src = db.get("SELECT * FROM Order_Files WHERE File_ID=?", [fileId]);
       if (!src) continue;
+      const sourceOrder = db.get('SELECT * FROM Orders WHERE Task_ID=?', [src.Task_ID]);
+      if (!canAccessOrder(req, sourceOrder)) continue;
 
       const buffer = await getFileBuffer(src);
       if (!buffer) continue;
 
-      const storedName = `TaskID_${taskId}_${src.Original_Name}`;
+      const storedName = `TaskID_${taskId}_${Date.now()}_${safeFileName(src.Original_Name)}`;
       const localPath = path.join(taskDir, storedName);
       fs.writeFileSync(localPath, buffer);
 
@@ -285,6 +296,8 @@ async function getFileBuffer(file) {
 }
 
 router.get('/list/:taskId', requireAuth(), (req, res) => {
+  const order = db.get('SELECT * FROM Orders WHERE Task_ID=?', [req.params.taskId]);
+  if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
   const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_Type, Created_At", [req.params.taskId]);
   res.json(files || []);
 });
@@ -292,6 +305,7 @@ router.get('/list/:taskId', requireAuth(), (req, res) => {
 router.put('/label/:fileId', requirePermission('orders'), (req, res) => {
   const file = db.get("SELECT * FROM Order_Files WHERE File_ID=?", [req.params.fileId]);
   if (!file) return res.status(404).json({ error: 'الملف غير موجود' });
+  if (!canAccessOrder(req, db.get('SELECT * FROM Orders WHERE Task_ID=?', [file.Task_ID]))) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
   const label = (req.body.label || '').toString().trim() || file.Original_Name;
   db.run("UPDATE Order_Files SET Label=? WHERE File_ID=?", [label, file.File_ID]);
   res.json({ ok: true, label });
@@ -300,6 +314,7 @@ router.put('/label/:fileId', requirePermission('orders'), (req, res) => {
 router.get('/image/:fileId', requireAuth(), async (req, res) => {
   const file = db.get("SELECT * FROM Order_Files WHERE File_ID=?", [req.params.fileId]);
   if (!file) return res.status(404).json({ error: 'الملف غير موجود' });
+  if (!canAccessOrder(req, db.get('SELECT * FROM Orders WHERE Task_ID=?', [file.Task_ID]))) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
   if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
     try {
@@ -317,6 +332,7 @@ router.get('/image/:fileId', requireAuth(), async (req, res) => {
 router.get('/download/:taskId', requireAuth(), async (req, res) => {
   const order = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.taskId]);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
   const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=?", [req.params.taskId]);
 
@@ -391,6 +407,7 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
 router.get('/download-file/:fileId', requireAuth(), async (req, res) => {
   const file = db.get("SELECT * FROM Order_Files WHERE File_ID=?", [req.params.fileId]);
   if (!file) return res.status(404).json({ error: 'الملف غير موجود' });
+  if (!canAccessOrder(req, db.get('SELECT * FROM Orders WHERE Task_ID=?', [file.Task_ID]))) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
   if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
     try {
@@ -415,6 +432,7 @@ router.get('/download-file/:fileId', requireAuth(), async (req, res) => {
 router.delete('/file/:fileId', requirePermission('orders'), async (req, res) => {
   const file = db.get("SELECT * FROM Order_Files WHERE File_ID=?", [req.params.fileId]);
   if (!file) return res.status(404).json({ error: 'الملف غير موجود' });
+  if (!canAccessOrder(req, db.get('SELECT * FROM Orders WHERE Task_ID=?', [file.Task_ID]))) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
   if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
     await gdrive.deleteFile(file.File_Path.replace('gdrive://', ''));
@@ -438,6 +456,7 @@ router.delete('/file/:fileId', requirePermission('orders'), async (req, res) => 
 router.delete('/:taskId', requirePermission('orders'), async (req, res) => {
   const order = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.taskId]);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
   const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=?", [req.params.taskId]);
   if (files) {

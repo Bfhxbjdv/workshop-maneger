@@ -3,7 +3,8 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const db = require('../database/connection');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, canAccessOrder, orderScope } = require('../middleware/auth');
+const { deliverOrder } = require('../services/orderAccounting');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 
@@ -30,19 +31,11 @@ router.get('/', requireAuth(), (req, res) => {
   if (clientOnly) { where.push("o.Client_ID = ?"); params.push(parseInt(clientOnly)); }
   if (excludeTask) { where.push("o.Task_ID != ?"); params.push(excludeTask); }
 
-  const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
+  const scope = orderScope(req);
+  where.push(scope.sql);
+  params.push(...scope.params);
+  const whereClause = 'WHERE ' + where.join(' AND ');
   const countRow = db.get(`SELECT COUNT(*) as total FROM Orders o LEFT JOIN Clients c ON o.Client_ID = c.Client_ID ${whereClause}`, params);
-
-  let roleFilter = '';
-  let roleParams = [];
-  if (req.session.role === 'Designer') {
-    roleFilter = 'AND o.Designer_ID = ?';
-    roleParams = [req.session.userId];
-  } else if (req.session.role === 'Laser_Op') {
-    roleFilter = "AND o.Machine_Type = 'Laser'";
-  } else if (req.session.role === 'Router_Op') {
-    roleFilter = "AND o.Machine_Type = 'Router'";
-  }
 
   let orderBy = 'o.Created_At DESC';
   if (sort === 'oldest') orderBy = 'o.Created_At ASC';
@@ -58,10 +51,10 @@ router.get('/', requireAuth(), (req, res) => {
     FROM Orders o
     LEFT JOIN Clients c ON o.Client_ID = c.Client_ID
     LEFT JOIN Inventory i ON o.Material_ID = i.Material_ID
-    ${whereClause} ${roleFilter}
+    ${whereClause}
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
-  `, [...params, ...roleParams, limit, offset]);
+  `, [...params, limit, offset]);
 
   const enriched = orders.map(o => {
     if (o.Materials_Data) {
@@ -81,6 +74,9 @@ router.get('/', requireAuth(), (req, res) => {
 });
 
 router.post('/', requirePermission('orders'), (req, res) => {
+  if (!['Admin', 'Designer', 'Custom'].includes(req.session.role)) {
+    return res.status(403).json({ error: 'إنشاء الطلبات متاح للمصمم أو المدير فقط' });
+  }
   const { Client_ID, Machine_Type, Materials, Notes } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
   const machineType = (Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
@@ -111,38 +107,26 @@ router.post('/', requirePermission('orders'), (req, res) => {
   res.json(order);
 });
 
-router.put('/:id', requireAuth(), (req, res) => {
+router.put('/:id', requirePermission('orders'), (req, res) => {
   const { Status, Material_ID, Material_Qty, Notes } = req.body;
   const oldOrder = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.id]);
+  if (!oldOrder) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, oldOrder)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
+  if (Status === 'تم التسليم') {
+    if (req.session.role !== 'Admin' && req.session.role !== 'Custom') return res.status(403).json({ error: 'تسليم الطلبات متاح للمدير فقط' });
+    const result = deliverOrder(req.params.id);
+    if (result.error) return res.status(400).json({ error: result.error });
+    db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)", [req.params.id, `تم تسليم الطلب #${req.params.id}`, 'success']);
+    return res.json({ success: true, alreadyDelivered: result.alreadyDelivered });
+  }
+  if (Status && !['قيد التصميم', 'جاهز للقص', 'قيد التنفيذ', 'تم الانتهاء من القص', 'تم التغليف'].includes(Status)) {
+    return res.status(400).json({ error: 'حالة الطلب غير صالحة' });
+  }
 
   db.run(
     "UPDATE Orders SET Status=COALESCE(?,Status), Material_ID=COALESCE(?,Material_ID), Material_Qty=COALESCE(?,Material_Qty), Notes=COALESCE(?,Notes), Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?",
     [Status || null, Material_ID || null, Material_Qty || null, Notes || null, req.params.id]
   );
-
-  let totalCost = 0;
-  if (Status === 'تم التسليم') {
-    const orderMats = db.all("SELECT * FROM Order_Materials WHERE Task_ID=?", [req.params.id]);
-    if (orderMats.length > 0) {
-      orderMats.forEach(om => {
-        const mat = db.get("SELECT * FROM Inventory WHERE Material_ID=?", [om.Material_ID]);
-        if (mat && mat.Quantity >= om.Quantity) {
-          db.run("UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?", [om.Quantity, om.Material_ID]);
-          totalCost += om.Quantity * mat.Cost_Per_Unit;
-        }
-      });
-    } else if (oldOrder && oldOrder.Material_ID && oldOrder.Material_Qty > 0) {
-      const mat = db.get("SELECT * FROM Inventory WHERE Material_ID=?", [oldOrder.Material_ID]);
-      if (mat && mat.Quantity >= oldOrder.Material_Qty) {
-        db.run("UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?", [oldOrder.Material_Qty, oldOrder.Material_ID]);
-        totalCost = oldOrder.Material_Qty * mat.Cost_Per_Unit;
-      }
-    }
-    if (totalCost > 0) {
-      db.run("UPDATE Clients SET Total_Spent = Total_Spent + ? WHERE Client_ID=?", [totalCost, oldOrder.Client_ID]);
-    }
-    db.run("UPDATE Orders SET Cost=?, Profit=COALESCE(Price,0)-? WHERE Task_ID=?", [totalCost, totalCost, req.params.id]);
-  }
 
   if (Status === 'جاهز للقص') {
     db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)", [req.params.id, `طلب جديد جاهز للقص - #${req.params.id}`, 'info']);
@@ -156,34 +140,19 @@ router.put('/:id', requireAuth(), (req, res) => {
   res.json({ success: true });
 });
 
-router.put('/:id/status', requireAuth(), (req, res) => {
+router.put('/:id/status', requirePermission('orders'), (req, res) => {
   const { Status } = req.body;
   const oldOrder = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.id]);
-
-  db.run("UPDATE Orders SET Status=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [Status, req.params.id]);
-
-  let totalCost = 0;
+  if (!oldOrder) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, oldOrder)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
   if (Status === 'تم التسليم') {
-    const orderMats = db.all("SELECT * FROM Order_Materials WHERE Task_ID=?", [req.params.id]);
-    if (orderMats.length > 0) {
-      orderMats.forEach(om => {
-        const mat = db.get("SELECT * FROM Inventory WHERE Material_ID=?", [om.Material_ID]);
-        if (mat && mat.Quantity >= om.Quantity) {
-          db.run("UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?", [om.Quantity, om.Material_ID]);
-          totalCost += om.Quantity * mat.Cost_Per_Unit;
-        }
-      });
-    } else if (oldOrder && oldOrder.Material_ID && oldOrder.Material_Qty > 0) {
-      const mat = db.get("SELECT * FROM Inventory WHERE Material_ID=?", [oldOrder.Material_ID]);
-      if (mat && mat.Quantity >= oldOrder.Material_Qty) {
-        db.run("UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?", [oldOrder.Material_Qty, oldOrder.Material_ID]);
-        totalCost = oldOrder.Material_Qty * mat.Cost_Per_Unit;
-      }
-    }
-    if (totalCost > 0) {
-      db.run("UPDATE Clients SET Total_Spent = Total_Spent + ? WHERE Client_ID=?", [totalCost, oldOrder.Client_ID]);
-    }
-    db.run("UPDATE Orders SET Cost=?, Profit=COALESCE(Price,0)-? WHERE Task_ID=?", [totalCost, totalCost, req.params.id]);
+    if (req.session.role !== 'Admin' && req.session.role !== 'Custom') return res.status(403).json({ error: 'تسليم الطلبات متاح للمدير فقط' });
+    const result = deliverOrder(req.params.id);
+    if (result.error) return res.status(400).json({ error: result.error });
+  } else {
+    const allowed = ['قيد التصميم', 'جاهز للقص', 'قيد التنفيذ', 'تم الانتهاء من القص', 'تم التغليف'];
+    if (!allowed.includes(Status)) return res.status(400).json({ error: 'حالة الطلب غير صالحة' });
+    db.run("UPDATE Orders SET Status=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [Status, req.params.id]);
   }
 
   if (Status === 'جاهز للقص') {
@@ -214,6 +183,7 @@ router.put('/:id/status', requireAuth(), (req, res) => {
 router.post('/:id/duplicate', requirePermission('orders'), (req, res) => {
   const old = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.id]);
   if (!old) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, old)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
   const result = db.run(
     `INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes)
@@ -238,19 +208,23 @@ router.post('/:id/duplicate', requirePermission('orders'), (req, res) => {
   res.json(order);
 });
 
-router.get('/notifications', requireAuth(), (req, res) => {
-  const notifs = db.all("SELECT n.*, o.Client_ID FROM Notifications n LEFT JOIN Orders o ON n.Task_ID=o.Task_ID ORDER BY n.Created_At DESC LIMIT 20");
+router.get('/notifications', requirePermission('orders'), (req, res) => {
+  const scope = orderScope(req);
+  const notifs = db.all(`SELECT n.*, o.Client_ID FROM Notifications n LEFT JOIN Orders o ON n.Task_ID=o.Task_ID WHERE ${scope.sql} ORDER BY n.Created_At DESC LIMIT 20`, scope.params);
   res.json(notifs);
 });
 
-router.post('/notifications/read', requireAuth(), (req, res) => {
-  db.run("UPDATE Notifications SET Is_Read=1");
+router.post('/notifications/read', requirePermission('orders'), (req, res) => {
+  const scope = orderScope(req);
+  db.run(`UPDATE Notifications SET Is_Read=1 WHERE Task_ID IN (SELECT Task_ID FROM Orders o WHERE ${scope.sql})`, scope.params);
   res.json({ success: true });
 });
 
 router.delete('/:id', requirePermission('orders'), (req, res) => {
   const order = db.get("SELECT * FROM Orders WHERE Task_ID=?", [req.params.id]);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
+  if (!['Admin', 'Designer', 'Custom'].includes(req.session.role)) return res.status(403).json({ error: 'حذف الطلبات غير متاح لهذا الدور' });
   const archiveRoot = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
   const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=?", [req.params.id]);
   if (files) {
@@ -297,17 +271,18 @@ router.delete('/:id', requirePermission('orders'), (req, res) => {
   res.json({ success: true });
 });
 
-router.get('/stats', requireAuth(), (req, res) => {
-  const totalOrders = db.get("SELECT COUNT(*) as cnt FROM Orders")?.cnt || 0;
-  const activeOrders = db.get("SELECT COUNT(*) as cnt FROM Orders WHERE Status NOT IN ('تم التسليم')")?.cnt || 0;
-  const totalClients = db.get("SELECT COUNT(*) as cnt FROM Clients")?.cnt || 0;
-  const lowStock = db.all("SELECT * FROM Inventory WHERE Quantity < 5");
+router.get('/stats', requirePermission('orders'), (req, res) => {
+  const scope = orderScope(req);
+  const totalOrders = db.get(`SELECT COUNT(*) as cnt FROM Orders o WHERE ${scope.sql}`, scope.params)?.cnt || 0;
+  const activeOrders = db.get(`SELECT COUNT(*) as cnt FROM Orders o WHERE ${scope.sql} AND o.Status NOT IN ('تم التسليم')`, scope.params)?.cnt || 0;
+  const totalClients = db.get(`SELECT COUNT(DISTINCT o.Client_ID) as cnt FROM Orders o WHERE ${scope.sql}`, scope.params)?.cnt || 0;
+  const lowStock = (req.session.role === 'Admin' || req.session.role === 'Custom') ? db.all("SELECT * FROM Inventory WHERE Quantity < 5") : [];
   const recentOrders = db.all(`
     SELECT o.*, c.Full_Name as Client_Name
-    FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID
+    FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE ${scope.sql}
     ORDER BY o.Created_At DESC LIMIT 5
-  `);
-  const statusCounts = db.all("SELECT Status, COUNT(*) as cnt FROM Orders GROUP BY Status");
+  `, scope.params);
+  const statusCounts = db.all(`SELECT Status, COUNT(*) as cnt FROM Orders o WHERE ${scope.sql} GROUP BY Status`, scope.params);
 
   res.json({ totalOrders, activeOrders, totalClients, lowStock, recentOrders, statusCounts });
 });
@@ -322,6 +297,7 @@ router.get('/:id/receipt/pdf', requireAuth(), async (req, res) => {
     WHERE o.Task_ID = ?
   `, [req.params.id]);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
   const receiptDir = path.join(__dirname, '..', 'Server_Storage', 'Receipts');
   if (!fs.existsSync(receiptDir)) fs.mkdirSync(receiptDir, { recursive: true });

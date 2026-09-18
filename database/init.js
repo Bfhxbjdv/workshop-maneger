@@ -179,12 +179,13 @@ async function initDatabase() {
 
   const existing = db.query("SELECT COUNT(*) as cnt FROM Users");
   if (existing[0].cnt === 0) {
-    const hash = bcrypt.hashSync('admin123', 10);
-    db.run("INSERT INTO Users (Name, Role, Username, Password) VALUES (?, ?, ?, ?)", ['مدير النظام', 'Admin', 'admin', hash]);
-    db.run("INSERT INTO Users (Name, Role, Username, Password) VALUES (?, ?, ?, ?)", ['مصمم 1', 'Designer', 'designer', bcrypt.hashSync('designer123', 10)]);
-    db.run("INSERT INTO Users (Name, Role, Username, Password) VALUES (?, ?, ?, ?)", ['عامل ليزر', 'Laser_Op', 'laser', bcrypt.hashSync('laser123', 10)]);
-    db.run("INSERT INTO Users (Name, Role, Username, Password) VALUES (?, ?, ?, ?)", ['عامل راوتر', 'Router_Op', 'router', bcrypt.hashSync('router123', 10)]);
-    console.log('✅ Users seeded');
+    const password = process.env.INITIAL_ADMIN_PASSWORD;
+    if (!password || password.length < 12) {
+      throw new Error('قاعدة البيانات الجديدة تحتاج INITIAL_ADMIN_PASSWORD بطول 12 حرفاً على الأقل');
+    }
+    const username = process.env.INITIAL_ADMIN_USERNAME || 'admin';
+    db.run("INSERT INTO Users (Name, Role, Username, Password) VALUES (?, ?, ?, ?)", ['مدير النظام', 'Admin', username, bcrypt.hashSync(password, 12)]);
+    console.log('✅ تم إنشاء حساب المدير الأول');
   }
 
   try {
@@ -238,8 +239,9 @@ async function initDatabase() {
 
   try {
     const cols = db.query("PRAGMA table_info(Users)");
-    const hasCustom = cols.some(c => c.name === 'Role');
-    if (hasCustom) {
+    const userSql = db.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='Users'");
+    const needsCustomRoleMigration = userSql.length && /CHECK/i.test(userSql[0].sql || '') && !/(?:'Custom'|\"Custom\")/.test(userSql[0].sql || '');
+    if (needsCustomRoleMigration) {
       const users = db.all("SELECT * FROM Users");
       db.exec("DROP TABLE IF EXISTS Users_backup");
       db.exec(`CREATE TABLE Users_backup (

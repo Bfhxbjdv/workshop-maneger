@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, canAccessOrder } = require('../middleware/auth');
 
 const STORAGE = path.join(__dirname, '..', 'Designs_Storage');
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
@@ -28,6 +28,13 @@ router.use((req, res, next) => {
 });
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d; }
+
+function canAccessDesign(req, designId) {
+  if (req.session.role === 'Admin') return true;
+  const permissionCount = db.get('SELECT COUNT(*) as count FROM Design_Permissions WHERE Design_ID=?', [designId]);
+  if (!permissionCount?.count) return true;
+  return !!db.get('SELECT 1 FROM Design_Permissions WHERE Design_ID=? AND User_ID=?', [designId, req.session.userId]);
+}
 
 // ---------- helper: design with permission visibility ----------
 function visibleDesignSql(user) {
@@ -188,6 +195,7 @@ router.put('/:id', requirePermission('admin'), upload.fields([{ name: 'thumbnail
 router.delete('/:id', requirePermission('admin'), (req, res) => {
   const d = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
   if (!d) return res.status(404).json({ error: 'التصميم غير موجود' });
+  if (!canAccessDesign(req, d.Design_ID)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا التصميم' });
   try { fs.rmSync(path.join(STORAGE, path.dirname(d.FilePath)), { recursive: true, force: true }); } catch {}
   db.run("DELETE FROM Designs WHERE Design_ID=?", [req.params.id]);
   res.json({ success: true });
@@ -209,6 +217,7 @@ router.post('/:id/permissions', requirePermission('admin'), (req, res) => {
 router.post('/:id/verify-password', requireAuth(), (req, res) => {
   const d = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
   if (!d) return res.status(404).json({ error: 'التصميم غير موجود' });
+  if (!canAccessDesign(req, d.Design_ID)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا التصميم' });
   if (!d.Password) return res.json({ success: true });
   const ok = bcrypt.compareSync(req.body.Password || '', d.Password);
   if (!ok) return res.status(403).json({ error: 'كلمة المرور غير صحيحة' });
@@ -221,6 +230,7 @@ router.post('/:id/verify-password', requireAuth(), (req, res) => {
 router.get('/:id/thumbnail', requireAuth(), (req, res) => {
   const d = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
   if (!d || !d.ThumbnailPath) return res.status(404).send('no thumb');
+  if (!canAccessDesign(req, d.Design_ID)) return res.status(403).send('لا تملك الصلاحية لهذا التصميم');
   const fp = path.join(STORAGE, d.ThumbnailPath);
   if (!fs.existsSync(fp)) return res.status(404).send('no thumb');
   res.sendFile(fp);
@@ -278,7 +288,7 @@ function clientDirFor(clientName) {
   return d;
 }
 
-router.post('/:id/add-to-order', requireAuth(), async (req, res) => {
+router.post('/:id/add-to-order', requirePermission('orders'), async (req, res) => {
   try {
     const design = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
     if (!design) return res.status(404).json({ error: 'التصميم غير موجود' });
@@ -297,14 +307,14 @@ router.post('/:id/add-to-order', requireAuth(), async (req, res) => {
 
     if (req.body.Task_ID) {
       const orderRow = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [req.body.Task_ID]);
-      if (orderRow) { order = orderRow; order.Task_ID = parseInt(req.body.Task_ID, 10); }
+      if (orderRow && canAccessOrder(req, orderRow)) { order = orderRow; order.Task_ID = parseInt(req.body.Task_ID, 10); }
     }
     if (!order && req.body.Client_ID) {
       const c = db.get("SELECT * FROM Clients WHERE Client_ID=?", [req.body.Client_ID]);
       if (c) {
         client = c;
-        let designerId = req.body.Designer_ID || req.session.userId;
-        if (req.body.Designer_ID) {
+        let designerId = req.session.userId;
+        if (req.body.Designer_ID && ['Admin', 'Custom'].includes(req.session.role)) {
           const des = db.get("SELECT User_ID FROM Users WHERE User_ID=? AND (Role='Designer' OR Role='Admin')", [req.body.Designer_ID]);
           if (!des) designerId = req.session.userId;
         }

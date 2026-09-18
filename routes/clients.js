@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database/connection');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, orderScope } = require('../middleware/auth');
 
-router.get('/', requireAuth(), (req, res) => {
+router.get('/', requirePermission('clients'), (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = 50;
   const offset = (page - 1) * limit;
@@ -21,7 +21,7 @@ router.get('/', requireAuth(), (req, res) => {
   res.json({ clients, total: countRow.total, page, pages: Math.ceil(countRow.total / limit) });
 });
 
-router.get('/all', requireAuth(), (req, res) => {
+router.get('/all', requirePermission('clients'), (req, res) => {
   const search = req.query.search || '';
   let where = '';
   let params = [];
@@ -33,13 +33,14 @@ router.get('/all', requireAuth(), (req, res) => {
   res.json(clients);
 });
 
-router.get('/:id', requireAuth(), (req, res) => {
+router.get('/:id', requirePermission('clients'), (req, res) => {
   const client = db.get("SELECT * FROM Clients WHERE Client_ID=?", [req.params.id]);
   if (!client) return res.status(404).json({ error: 'العميل غير موجود' });
   res.json(client);
 });
 
-router.get('/:id/orders', requireAuth(), (req, res) => {
+router.get('/:id/orders', requirePermission('clients'), (req, res) => {
+  const scope = orderScope(req);
   const orders = db.all(`
     SELECT o.*,
       CASE WHEN EXISTS(SELECT 1 FROM Order_Materials WHERE Task_ID=o.Task_ID)
@@ -50,12 +51,12 @@ router.get('/:id/orders', requireAuth(), (req, res) => {
       END as Materials_List
     FROM Orders o
     LEFT JOIN Inventory i ON o.Material_ID = i.Material_ID
-    WHERE o.Client_ID = ? ORDER BY o.Created_At DESC
-  `, [req.params.id]);
+    WHERE o.Client_ID = ? AND ${scope.sql} ORDER BY o.Created_At DESC
+  `, [req.params.id, ...scope.params]);
   res.json(orders);
 });
 
-router.post('/', requireAuth(), (req, res) => {
+router.post('/', requirePermission('clients'), (req, res) => {
   const { Full_Name, Phone_Number, Notes } = req.body;
   if (!Full_Name) return res.status(400).json({ error: 'اسم العميل مطلوب' });
   const result = db.run(
@@ -67,7 +68,7 @@ router.post('/', requireAuth(), (req, res) => {
   res.json(client);
 });
 
-router.put('/:id', requireAuth(), (req, res) => {
+router.put('/:id', requirePermission('clients'), (req, res) => {
   const { Full_Name, Phone_Number, Rating, Notes } = req.body;
   const current = db.get("SELECT * FROM Clients WHERE Client_ID=?", [req.params.id]);
   if (!current) return res.status(404).json({ error: 'العميل غير موجود' });

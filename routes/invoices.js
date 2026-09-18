@@ -3,7 +3,8 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const db = require('../database/connection');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, canAccessOrder, orderScope } = require('../middleware/auth');
+const { deliverOrder, validateDelivery } = require('../services/orderAccounting');
 const PDFDocument = require('pdfkit');
 const gdrive = require('../services/googleDrive');
 
@@ -116,15 +117,17 @@ async function generatePdf(invoice, order, client, materials) {
   });
 }
 
-router.get('/', requireAuth(), (req, res) => {
+router.get('/', requirePermission('invoices'), (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = 50;
   const offset = (page - 1) * limit;
   const search = req.query.search || '';
   let params = [];
-  let where = '';
-  if (search) { where = 'WHERE c.Full_Name LIKE ?'; params.push(`%${search}%`); }
-  const countRow = db.get(`SELECT COUNT(*) as total FROM Invoices i LEFT JOIN Clients c ON i.Client_ID=c.Client_ID ${where}`, params);
+  const scope = orderScope(req, 'o');
+  const conditions = [scope.sql];
+  if (search) { conditions.push('c.Full_Name LIKE ?'); params.push(`%${search}%`); }
+  const where = 'WHERE ' + conditions.join(' AND ');
+  const countRow = db.get(`SELECT COUNT(*) as total FROM Invoices i LEFT JOIN Clients c ON i.Client_ID=c.Client_ID LEFT JOIN Orders o ON i.Order_Task_ID=o.Task_ID ${where}`, [...scope.params, ...params]);
   const invoices = db.all(`
     SELECT i.*, c.Full_Name as Client_Name, o.Machine_Type
     FROM Invoices i
@@ -133,7 +136,7 @@ router.get('/', requireAuth(), (req, res) => {
     ${where}
     ORDER BY i.Created_At DESC
     LIMIT ? OFFSET ?
-  `, [...params, limit, offset]);
+  `, [...scope.params, ...params, limit, offset]);
   res.json({ invoices, total: countRow.total, page, pages: Math.ceil(countRow.total / limit) });
 });
 
@@ -146,6 +149,9 @@ router.post('/', requirePermission('invoices'), async (req, res) => {
 
   const order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [Order_Task_ID]);
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
+  const stockError = validateDelivery(order);
+  if (stockError) return res.status(400).json({ error: stockError });
 
   const client = db.get("SELECT * FROM Clients WHERE Client_ID=?", [order.Client_ID]);
   if (!client) return res.status(404).json({ error: 'العميل غير موجود' });
@@ -180,18 +186,8 @@ router.post('/', requirePermission('invoices'), async (req, res) => {
     }
   }
 
-  const orderMats = db.all("SELECT * FROM Order_Materials WHERE Task_ID=?", [Order_Task_ID]);
-  let totalCost = 0;
-  orderMats.forEach(om => {
-    const mat = db.get("SELECT * FROM Inventory WHERE Material_ID=?", [om.Material_ID]);
-    if (mat && mat.Quantity >= om.Quantity) {
-      db.run("UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?", [om.Quantity, om.Material_ID]);
-      totalCost += om.Quantity * mat.Cost_Per_Unit;
-    }
-  });
-  if (totalCost > 0) db.run("UPDATE Clients SET Total_Spent = Total_Spent + ? WHERE Client_ID=?", [totalCost, order.Client_ID]);
-  const profit = Amount - totalCost;
-  db.run("UPDATE Orders SET Status='تم التسليم', Price=?, Cost=?, Profit=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [Amount, totalCost, profit, Order_Task_ID]);
+  const delivery = deliverOrder(Order_Task_ID, Amount);
+  if (delivery.error) return res.status(400).json({ error: delivery.error });
   if (global.io) {
     const updated = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [Order_Task_ID]);
     global.io.emit('order-update', updated);
@@ -211,6 +207,8 @@ router.get('/:id', requireAuth(), (req, res) => {
     WHERE i.Invoice_ID = ?
   `, [req.params.id]);
   if (!invoice) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+  const invoiceOrder = db.get('SELECT * FROM Orders WHERE Task_ID=?', [invoice.Order_Task_ID]);
+  if (!canAccessOrder(req, invoiceOrder)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذه الفاتورة' });
   const materials = db.all(`
     SELECT i.Material_Name, i.Thickness, i.Cost_Per_Unit, om.Quantity
     FROM Order_Materials om
@@ -230,6 +228,8 @@ router.get('/:id/pdf', requireAuth(), async (req, res) => {
     WHERE i.Invoice_ID = ?
   `, [req.params.id]);
   if (!invoice) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+  const invoiceOrder = db.get('SELECT * FROM Orders WHERE Task_ID=?', [invoice.Order_Task_ID]);
+  if (!canAccessOrder(req, invoiceOrder)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذه الفاتورة' });
 
   if (invoice.File_Path && !invoice.File_Path.startsWith('gdrive://')) {
     const filePath = path.join(INVOICES_DIR, invoice.File_Path);
@@ -258,6 +258,8 @@ router.get('/:id/view', requireAuth(), (req, res) => {
     WHERE i.Invoice_ID = ?
   `, [req.params.id]);
   if (!invoice) return res.status(404).send('الفاتورة غير موجودة');
+  const invoiceOrder = db.get('SELECT * FROM Orders WHERE Task_ID=?', [invoice.Order_Task_ID]);
+  if (!canAccessOrder(req, invoiceOrder)) return res.status(403).send('لا تملك الصلاحية لهذه الفاتورة');
   const materials = db.all(`
     SELECT i.Material_Name, i.Thickness, i.Cost_Per_Unit, om.Quantity
     FROM Order_Materials om
@@ -270,6 +272,8 @@ router.get('/:id/view', requireAuth(), (req, res) => {
 router.delete('/:id', requirePermission('invoices'), (req, res) => {
   const invoice = db.get("SELECT * FROM Invoices WHERE Invoice_ID=?", [req.params.id]);
   if (!invoice) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+  const invoiceOrder = db.get('SELECT * FROM Orders WHERE Task_ID=?', [invoice.Order_Task_ID]);
+  if (!canAccessOrder(req, invoiceOrder)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذه الفاتورة' });
   if (invoice.File_Path && !invoice.File_Path.startsWith('gdrive://')) {
     const filePath = path.join(INVOICES_DIR, invoice.File_Path);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);

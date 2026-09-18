@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require('../database/connection');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 
-router.get('/', requireAuth(), (req, res) => {
+router.get('/', requirePermission('inventory'), (req, res) => {
   const materials = db.all("SELECT * FROM Inventory ORDER BY Material_Name ASC");
   res.json(materials);
 });
@@ -30,12 +30,14 @@ router.put('/:id', requirePermission('inventory'), (req, res) => {
   res.json({ success: true });
 });
 
-router.put('/:id/deduct', requireAuth(), (req, res) => {
+router.put('/:id/deduct', requirePermission('inventory'), (req, res) => {
   const { qty } = req.body;
+  const amount = Number(qty);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'الكمية غير صالحة' });
   const mat = db.get("SELECT * FROM Inventory WHERE Material_ID=?", [req.params.id]);
   if (!mat) return res.status(404).json({ error: 'المادة غير موجودة' });
-  if (mat.Quantity < qty) return res.status(400).json({ error: 'الكمية غير كافية في المخزون' });
-  db.run("UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?", [qty, req.params.id]);
+  if (mat.Quantity < amount) return res.status(400).json({ error: 'الكمية غير كافية في المخزون' });
+  db.run("UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?", [amount, req.params.id]);
   res.json({ success: true });
 });
 
