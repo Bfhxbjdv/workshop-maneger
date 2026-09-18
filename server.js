@@ -60,7 +60,18 @@ if (process.env.TRUST_PROXY === '1') {
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
+// Auto cache-buster: changes whenever any static asset changes, forcing
+// browsers/CDNs to fetch fresh instead of a stale designs.js (which caused
+// "file disappears on click" after uploads changed the file).
+const assetVersion = (() => {
+  try {
+    const djs = fs.statSync(path.join(__dirname, 'public', 'js', 'designs.js')).mtimeMs;
+    return String(djs).replace('.', '');
+  } catch { return Date.now().toString(); }
+})();
+
 app.use((req, res, next) => {
+  res.locals.assetVersion = assetVersion;
   if (req.session.userId) {
     const user = db.get("SELECT Permissions FROM Users WHERE User_ID=?", [req.session.userId]);
     let permissions = {};
