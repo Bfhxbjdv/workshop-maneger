@@ -30,7 +30,16 @@ global.io = io;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (['.js', '.css', '.html', '.htm'].includes(ext)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'workshop-secret-key-2024',
@@ -67,6 +76,17 @@ app.use((req, res, next) => {
   } else {
     res.locals.user = null;
   }
+  next();
+});
+
+// Never let browsers/CDNs cache rendered pages so the latest markup and
+// versioned assets are always fetched. (Static .js/.css already get their
+// own no-cache headers via express.static setHeaders and are skipped here.)
+app.use((req, res, next) => {
+  if (req.path.endsWith('.js') || req.path.endsWith('.css')) { return next(); }
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   next();
 });
 
