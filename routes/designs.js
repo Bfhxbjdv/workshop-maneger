@@ -308,8 +308,9 @@ router.post('/:id/add-to-order', requireAuth(), async (req, res) => {
           const des = db.get("SELECT User_ID FROM Users WHERE User_ID=? AND (Role='Designer' OR Role='Admin')", [req.body.Designer_ID]);
           if (!des) designerId = req.session.userId;
         }
+        const machineType = (req.body.Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
         const res2 = db.run("INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes) VALUES (?, ?, ?, 'قيد التصميم', ?)",
-          [c.Client_ID, designerId, req.body.Machine_Type || 'Laser', `إضافة تصميم: ${design.Name}`]);
+          [c.Client_ID, designerId, machineType, `إضافة تصميم: ${design.Name}`]);
         order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [res2.lastId]);
         if (order) order.Task_ID = res2.lastId;
       }

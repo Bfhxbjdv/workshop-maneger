@@ -83,11 +83,12 @@ router.get('/', requireAuth(), (req, res) => {
 router.post('/', requirePermission('orders'), (req, res) => {
   const { Client_ID, Machine_Type, Materials, Notes } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
+  const machineType = (Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
 
   const result = db.run(
     `INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes)
      VALUES (?, ?, ?, 'قيد التصميم', ?)`,
-    [Client_ID, req.session.userId, Machine_Type, Notes || '']
+    [Client_ID, req.session.userId, machineType, Notes || '']
   );
 
   if (!result.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
