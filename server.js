@@ -36,6 +36,14 @@ if (!sessionSecret || sessionSecret.length < 24 || sessionSecret === 'workshop-s
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.get('/favicon.ico', (req, res) => {
+  res.type('image/svg+xml').send(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="12" fill="#0d6efd"/>
+      <path d="M18 38h28M22 29h20M27 20h10" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+    </svg>
+  `);
+});
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
     const ext = path.extname(filePath).toLowerCase();
