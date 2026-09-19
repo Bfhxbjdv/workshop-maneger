@@ -15,6 +15,7 @@ let viewerObjectUrl = null;
 document.addEventListener('DOMContentLoaded', () => {
   loadDesigns();
   loadUsersForPerms();
+  document.addEventListener('click', handleDesignAction);
   document.getElementById('batchFiles')?.addEventListener('change', onBatchFilesChanged);
   document.getElementById('aotOrderSelect')?.addEventListener('change', () => {
     const wrap = document.getElementById('aotNewOrderWrap');
@@ -23,6 +24,20 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('aotSearch')?.addEventListener('input', debounceAotSearch);
 });
+
+function handleDesignAction(event) {
+  const action = event.target.closest('[data-design-action]');
+  if (action) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = Number(action.dataset.designId);
+    if (action.dataset.designAction === 'download') return downloadDesignFile(event, id);
+    if (action.dataset.designAction === 'view-download') return downloadDesignFile(event, id);
+    if (action.dataset.designAction === 'open') return openViewDesign(id);
+  }
+  const card = event.target.closest('[data-design-card]');
+  if (card && !event.target.closest('[data-design-action]')) openViewDesign(Number(card.dataset.designId));
+}
 
 function openUploadModal() {
   document.getElementById('uploadDesignForm').reset();
@@ -98,7 +113,7 @@ function designCard(d) {
   const needsAdmin = document.body.dataset.role === 'Admin' || document.body.dataset.permAdmin === '1';
   const permCount = d.PermittedUsers?.length || 0;
   return `<div class="col-6 col-md-4 col-lg-3">
-    <div class="card design-card h-100" onclick="openViewDesign(${d.Design_ID})">
+    <div class="card design-card h-100" data-design-card data-design-id="${d.Design_ID}">
       <div class="position-relative">
         <span class="badge bg-dark badge-ext">${ext}</span>
         <div class="design-thumb">
@@ -106,7 +121,7 @@ function designCard(d) {
         </div>
         <div class="lock-badge d-flex gap-1">
           ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
-          <button type="button" class="badge bg-primary border-0" title="تحميل" onclick="downloadDesignFile(event, ${d.Design_ID});"><i class="bi bi-download"></i></button>
+          <button type="button" class="badge bg-primary border-0" data-design-action="download" data-design-id="${d.Design_ID}" title="تحميل"><i class="bi bi-download"></i></button>
         </div>
         ${(needsAdmin && permCount > 0) ? `<span class="badge bg-info thumb-badge"><i class="bi bi-people"></i> ${permCount}</span>` : ''}
       </div>
@@ -411,6 +426,8 @@ async function openViewDesign(id) {
   if (!res.ok) return showToast((await res.json()).error || 'لا يمكن فتح التصميم', 'danger');
   currentViewDesign = await res.json();
   document.getElementById('viewDesignName').textContent = currentViewDesign.Name;
+  const viewDownloadButton = document.getElementById('viewDownloadButton');
+  if (viewDownloadButton) viewDownloadButton.dataset.designId = currentViewDesign.Design_ID;
   buildSpecs(currentViewDesign);
 
   const pwWrap = document.getElementById('viewPasswordWrap');
