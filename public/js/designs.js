@@ -28,11 +28,9 @@ document.addEventListener('DOMContentLoaded', () => {
 function handleDesignAction(event) {
   const action = event.target.closest('[data-design-action]');
   if (action) {
-    event.preventDefault();
     event.stopPropagation();
     const id = Number(action.dataset.designId);
-    if (action.dataset.designAction === 'download') return downloadDesignFile(event, id);
-    if (action.dataset.designAction === 'view-download') return downloadDesignFile(event, id);
+    if (action.dataset.designAction === 'download' || action.dataset.designAction === 'view-download') return;
     if (action.dataset.designAction === 'open') return openViewDesign(id);
   }
   const card = event.target.closest('[data-design-card]');
@@ -121,7 +119,7 @@ function designCard(d) {
         </div>
         <div class="lock-badge d-flex gap-1">
           ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
-          <button type="button" class="badge bg-primary border-0" data-design-action="download" data-design-id="${d.Design_ID}" title="تحميل"><i class="bi bi-download"></i></button>
+          <a class="badge bg-primary text-decoration-none" data-design-action="download" data-design-id="${d.Design_ID}" href="/api/designs/${d.Design_ID}/download" download title="تحميل"><i class="bi bi-download"></i></a>
         </div>
         ${(needsAdmin && permCount > 0) ? `<span class="badge bg-info thumb-badge"><i class="bi bi-people"></i> ${permCount}</span>` : ''}
       </div>
@@ -427,7 +425,10 @@ async function openViewDesign(id) {
   currentViewDesign = await res.json();
   document.getElementById('viewDesignName').textContent = currentViewDesign.Name;
   const viewDownloadButton = document.getElementById('viewDownloadButton');
-  if (viewDownloadButton) viewDownloadButton.dataset.designId = currentViewDesign.Design_ID;
+  if (viewDownloadButton) {
+    viewDownloadButton.dataset.designId = currentViewDesign.Design_ID;
+    viewDownloadButton.href = `/api/designs/${currentViewDesign.Design_ID}/download`;
+  }
   buildSpecs(currentViewDesign);
 
   const pwWrap = document.getElementById('viewPasswordWrap');
