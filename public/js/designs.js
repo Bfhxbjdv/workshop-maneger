@@ -119,7 +119,7 @@ function designCard(d) {
         </div>
         <div class="lock-badge d-flex gap-1">
           ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
-          <a class="badge bg-primary text-decoration-none" data-design-action="download" data-design-id="${d.Design_ID}" href="/api/designs/${d.Design_ID}/download" download title="تحميل"><i class="bi bi-download"></i></a>
+          <a class="badge bg-primary text-decoration-none" data-design-action="download" data-design-id="${d.Design_ID}" href="/api/designs/${d.Design_ID}/download" target="_blank" rel="noopener" title="تحميل"><i class="bi bi-download"></i></a>
         </div>
         ${(needsAdmin && permCount > 0) ? `<span class="badge bg-info thumb-badge"><i class="bi bi-people"></i> ${permCount}</span>` : ''}
       </div>
