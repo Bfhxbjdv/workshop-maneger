@@ -29,6 +29,54 @@ router.use((req, res, next) => {
 
 function ensureDir(d) { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); return d; }
 
+function normalizeRelativeDesignPath(p) {
+  if (!p) return '';
+  return String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\//, '');
+}
+
+function resolveDesignPath(filePath) {
+  if (!filePath) return null;
+  const raw = String(filePath).trim();
+  if (!raw) return null;
+  if (path.isAbsolute(raw)) {
+    const safe = path.normalize(raw);
+    return safe.startsWith(path.resolve(STORAGE)) ? safe : null;
+  }
+  const candidate = path.join(STORAGE, normalizeRelativeDesignPath(raw));
+  const safe = path.resolve(candidate);
+  const root = path.resolve(STORAGE);
+  return safe.startsWith(root) ? safe : null;
+}
+
+function findDesignFileByName(design) {
+  if (!design) return null;
+  const target = (design.Original_Name || '').toLowerCase();
+  if (!target) return null;
+  let found = null;
+  function walk(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); }
+      else if ((entry.name || '').toLowerCase() === target || path.basename(full).toLowerCase() === target) {
+        found = full; break;
+      }
+    }
+  }
+  walk(STORAGE);
+  return found;
+}
+
+function getDesignFilePath(design) {
+  if (!design) return null;
+  return resolveDesignPath(design.FilePath) || findDesignFileByName(design);
+}
+
+function getThumbFilePath(design) {
+  if (!design || !design.ThumbnailPath) return null;
+  return resolveDesignPath(design.ThumbnailPath) || findDesignFileByName({ Original_Name: path.basename(design.ThumbnailPath) });
+}
+
 function canAccessDesign(req, designId) {
   if (req.session.role === 'Admin') return true;
   const permissionCount = db.get('SELECT COUNT(*) as count FROM Design_Permissions WHERE Design_ID=?', [designId]);
@@ -91,6 +139,7 @@ router.post('/', requirePermission('admin'), upload.fields([{ name: 'file', maxC
     const origName = uploaded.originalname;
     const filePath = path.join(designDir, origName);
     fs.renameSync(uploaded.path, filePath);
+    const relPath = normalizeRelativeDesignPath(path.relative(STORAGE, filePath));
 
     let thumbPath = null;
     if (req.files.thumbnail?.[0]) {
@@ -103,7 +152,7 @@ router.post('/', requirePermission('admin'), upload.fields([{ name: 'file', maxC
     const result = db.run(`INSERT INTO Designs
       (Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password, CreatedBy)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [Name, Category || '', Material || '', Thickness || '', parseFloat(Width) || 0, parseFloat(Height) || 0, Unit || 'سم', Notes || '', path.relative(STORAGE, filePath), origName, thumbRel, hashPass, req.session.userId]);
+      [Name, Category || '', Material || '', Thickness || '', parseFloat(Width) || 0, parseFloat(Height) || 0, Unit || 'سم', Notes || '', relPath, origName, thumbRel, hashPass, req.session.userId]);
 
     res.json({ success: true, Design_ID: result.lastId });
   } catch (e) { console.error('Design create error:', e); res.status(500).json({ error: e.message }); }
@@ -231,8 +280,8 @@ router.get('/:id/thumbnail', requireAuth(), (req, res) => {
   const d = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
   if (!d || !d.ThumbnailPath) return res.status(404).send('no thumb');
   if (!canAccessDesign(req, d.Design_ID)) return res.status(403).send('لا تملك الصلاحية لهذا التصميم');
-  const fp = path.join(STORAGE, d.ThumbnailPath);
-  if (!fs.existsSync(fp)) return res.status(404).send('no thumb');
+  const fp = getThumbFilePath(d);
+  if (!fp || !fs.existsSync(fp)) return res.status(404).send('no thumb');
   res.sendFile(fp);
 });
 
@@ -250,8 +299,8 @@ router.get('/:id/file', requireAuth(), (req, res) => {
   if (d.Password && !req.session.unlockedDesigns?.[d.Design_ID]) {
     return res.status(403).json({ error: 'هذا الملف محمي بكلمة مرور', needsPassword: true });
   }
-  const fp = path.join(STORAGE, d.FilePath);
-  if (!fs.existsSync(fp)) return res.status(404).json({ error: 'الملف غير موجود' });
+  const fp = getDesignFilePath(d);
+  if (!fp || !fs.existsSync(fp)) return res.status(404).json({ error: 'الملف غير موجود' });
   const ext = path.extname(d.Original_Name || '').toLowerCase();
   const inline = ['.png','.jpg','.jpeg','.gif','.webp','.bmp','.svg','.pdf','.txt','.dxf','.plt'].includes(ext);
   res.setHeader('Content-Type', mimeFor(d.Original_Name));
@@ -272,8 +321,8 @@ router.get('/:id/download', requireAuth(), (req, res) => {
   if (d.Password && !req.session.unlockedDesigns?.[d.Design_ID]) {
     return res.status(403).json({ error: 'هذا الملف محمي بكلمة مرور', needsPassword: true });
   }
-  const fp = path.join(STORAGE, d.FilePath);
-  if (!fs.existsSync(fp)) return res.status(404).json({ error: 'الملف غير موجود' });
+  const fp = getDesignFilePath(d);
+  if (!fp || !fs.existsSync(fp)) return res.status(404).json({ error: 'الملف غير موجود' });
   res.download(fp, d.Original_Name || `design_${d.Design_ID}`);
 });
 
