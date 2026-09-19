@@ -9,6 +9,8 @@ let aotSelectedClient = null;
 let batchFileList = [];
 let aotSearchTimer = null;
 let designsLoadRequest = 0;
+let viewerRequestId = 0;
+let viewerObjectUrl = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadDesigns();
@@ -404,7 +406,7 @@ async function deleteDesign() {
 
 // ===================== VIEW =====================
 async function openViewDesign(id) {
-  const res = await fetch('/api/designs/' + id);
+  const res = await fetch('/api/designs/' + id, { cache: 'no-store', credentials: 'same-origin' });
   if (res.status === 401) { window.location.href = '/login'; return; }
   if (!res.ok) return showToast((await res.json()).error || 'لا يمكن فتح التصميم', 'danger');
   currentViewDesign = await res.json();
@@ -453,7 +455,10 @@ async function downloadDesignFile(event, id) {
   try {
     const design = allDesigns.find(item => item.Design_ID === id);
     const name = design?.Original_Name || `design_${id}`;
-    const res = await fetch(`/api/designs/${id}/download`, { cache: 'no-store' });
+    const res = await fetch(`/api/designs/${id}/download`, {
+      cache: 'no-store',
+      credentials: 'same-origin'
+    });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       showToast(j.error || 'لا يمكن تحميل هذا الملف', 'danger');
@@ -474,6 +479,7 @@ async function downloadDesignFile(event, id) {
 }
 
 async function loadViewFile(d) {
+  const requestId = ++viewerRequestId;
   previewMode = 'auto';
   const canvas = document.getElementById('viewerCanvas');
   const placeholder = document.getElementById('viewerPlaceholder');
@@ -482,6 +488,11 @@ async function loadViewFile(d) {
   const textPre = document.getElementById('viewerText');
   const IMG_EXTS = ['png','jpg','jpeg','gif','webp','bmp'];
   const ext = extOf(d);
+
+  if (viewerObjectUrl) {
+    URL.revokeObjectURL(viewerObjectUrl);
+    viewerObjectUrl = null;
+  }
 
   const hideAll = () => {
     canvas.classList.add('d-none');
@@ -508,30 +519,41 @@ async function loadViewFile(d) {
 
   try {
     if (['dxf', 'plt', 'svg'].includes(ext)) {
-      const res = await fetch(`/api/designs/${d.Design_ID}/file`);
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`, { cache: 'no-store', credentials: 'same-origin' });
       if (!res.ok) throw new Error('لا يمكن فتح الملف' + (res.status === 403 ? ' - لا تملك الصلاحية' : ''));
       const text = await res.text();
+      if (requestId !== viewerRequestId) return;
       canvas.classList.remove('d-none');
       modeBtn.classList.remove('d-none');
       if (ext === 'dxf') drawDxf(canvas, text);
       else if (ext === 'plt') drawPlt(canvas, text);
       else if (ext === 'svg') drawSvg(canvas, text);
     } else if (ext === 'pdf' && pdfFrame) {
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`, { cache: 'no-store', credentials: 'same-origin' });
+      if (!res.ok) throw new Error('لا يمكن فتح الملف');
+      const blob = await res.blob();
+      if (requestId !== viewerRequestId) return;
+      viewerObjectUrl = URL.createObjectURL(blob);
       pdfFrame.classList.remove('d-none');
-      pdfFrame.src = `/api/designs/${d.Design_ID}/file`;
+      pdfFrame.src = viewerObjectUrl;
     } else if (IMG_EXTS.includes(ext)) {
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`, { cache: 'no-store', credentials: 'same-origin' });
+      if (!res.ok) throw new Error('لا يمكن فتح الملف');
+      const blob = await res.blob();
+      if (requestId !== viewerRequestId) return;
+      viewerObjectUrl = URL.createObjectURL(blob);
       placeholder.classList.remove('d-none');
       const img = document.getElementById('viewThumbImg');
       img.onerror = () => { img.style.display = 'none'; };
       img.onload = () => { img.style.display = ''; };
-      img.src = `/api/designs/${d.Design_ID}/file`;
+      img.src = viewerObjectUrl;
     } else if (ext === 'txt' && textPre) {
-      const res = await fetch(`/api/designs/${d.Design_ID}/file`);
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`, { cache: 'no-store', credentials: 'same-origin' });
       if (!res.ok) throw new Error('لا يمكن فتح الملف');
       textPre.textContent = await res.text();
       textPre.classList.remove('d-none');
     } else if (['ai', 'eps', 'cdr'].includes(ext)) {
-      const res = await fetch(`/api/designs/${d.Design_ID}/file`);
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`, { cache: 'no-store', credentials: 'same-origin' });
       if (!res.ok) throw new Error('لا يمكن فتح الملف');
       const buf = new Uint8Array(await res.arrayBuffer());
       const head = new TextDecoder('utf-8', { fatal: false }).decode(buf.subarray(0, Math.min(4096, buf.length)));
