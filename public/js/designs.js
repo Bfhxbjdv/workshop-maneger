@@ -8,6 +8,7 @@ let aotDesignId = null;
 let aotSelectedClient = null;
 let batchFileList = [];
 let aotSearchTimer = null;
+let designsLoadRequest = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadDesigns();
@@ -45,17 +46,23 @@ async function loadUsersForPerms() {
   } catch {}
 }
 
-async function loadDesigns() {
+async function loadDesigns({ preserveGrid = false } = {}) {
   const grid = document.getElementById('designsGrid');
-  grid.innerHTML = `<div class="col-12 text-center text-muted py-5"><div class="spinner-border"></div></div>`;
+  const requestId = ++designsLoadRequest;
+  if (!preserveGrid || !allDesigns.length) {
+    grid.innerHTML = `<div class="col-12 text-center text-muted py-5"><div class="spinner-border"></div></div>`;
+  }
   try {
     const res = await fetch('/api/designs', { cache: 'no-store' });
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (!res.ok) throw new Error((await res.json()).error);
-    allDesigns = await res.json();
+    const designs = await res.json();
+    if (requestId !== designsLoadRequest) return;
+    allDesigns = designs;
     buildCategoryList();
     renderDesigns();
   } catch (e) {
+    if (requestId !== designsLoadRequest) return;
     grid.innerHTML = `<div class="col-12 text-center text-danger py-4">خطأ في تحميل التصاميم: ${e.message}</div>`;
   }
 }
@@ -98,7 +105,7 @@ function designCard(d) {
         </div>
         <div class="lock-badge d-flex gap-1">
           ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
-          <a href="javascript:void(0)" class="badge bg-primary text-decoration-none" title="تحميل" onclick="event.stopPropagation(); event.preventDefault(); downloadDesignFile(${d.Design_ID}, '${String(d.Original_Name || 'design_' + d.Design_ID).replace(/'/g, "\\'")}');"><i class="bi bi-download"></i></a>
+          <button type="button" class="badge bg-primary border-0" title="تحميل" onclick="downloadDesignFile(event, ${d.Design_ID});"><i class="bi bi-download"></i></button>
         </div>
         ${(needsAdmin && permCount > 0) ? `<span class="badge bg-info thumb-badge"><i class="bi bi-people"></i> ${permCount}</span>` : ''}
       </div>
@@ -162,7 +169,7 @@ async function uploadDesign() {
   } catch (e) { showToast(e.message, 'danger'); }
   finally {
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع';
-    if (uploaded) loadDesigns();
+    if (uploaded) await loadDesigns({ preserveGrid: true });
   }
 }
 
@@ -319,7 +326,7 @@ async function uploadBatch() {
   } catch (e) { showToast(e.message, 'danger'); }
   finally {
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الكل';
-    loadDesigns();
+    await loadDesigns({ preserveGrid: true });
   }
 }
 
@@ -437,9 +444,13 @@ function buildSpecs(d) {
 
 function extOf(d) { return (d.Original_Name || '').split('.').pop().toLowerCase(); }
 
-async function downloadDesignFile(id, name) {
+async function downloadDesignFile(event, id) {
+  event?.preventDefault();
+  event?.stopPropagation();
   try {
-    const res = await fetch(`/api/designs/${id}/download`);
+    const design = allDesigns.find(item => item.Design_ID === id);
+    const name = design?.Original_Name || `design_${id}`;
+    const res = await fetch(`/api/designs/${id}/download`, { cache: 'no-store' });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
       showToast(j.error || 'لا يمكن تحميل هذا الملف', 'danger');
