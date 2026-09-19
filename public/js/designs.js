@@ -31,9 +31,8 @@ function openUploadModal() {
 function fillUserMultiSelect(selId, selectedIds = []) {
   const sel = document.getElementById(selId);
   if (!sel) return;
-  const designers = allUsers.filter(u => u.Role === 'Designer' || u.Role === 'Admin');
   sel.innerHTML = `<option value="__all__">جميع المستخدمين</option>` +
-    designers.map(u => `<option value="${u.User_ID}" ${selectedIds.includes(u.User_ID) ? 'selected' : ''}>${u.Name}${u.Role === 'Admin' ? ' (مدير)' : ''}</option>`).join('');
+    allUsers.map(u => `<option value="${u.User_ID}" ${selectedIds.includes(u.User_ID) ? 'selected' : ''}>${u.Name} (${u.Role})</option>`).join('');
 }
 
 async function loadUsersForPerms() {
@@ -445,6 +444,10 @@ function buildSpecs(d) {
 function extOf(d) { return (d.Original_Name || '').split('.').pop().toLowerCase(); }
 
 async function downloadDesignFile(event, id) {
+  if (typeof event === 'number' || typeof event === 'string') {
+    id = event;
+    event = null;
+  }
   event?.preventDefault();
   event?.stopPropagation();
   try {
