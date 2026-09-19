@@ -462,6 +462,17 @@ function buildSpecs(d) {
 
 function extOf(d) { return (d.Original_Name || '').split('.').pop().toLowerCase(); }
 
+function startBrowserDownload(id) {
+  const link = document.createElement('a');
+  link.href = `/api/designs/${id}/download`;
+  link.download = '';
+  link.rel = 'noopener';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 async function downloadDesignFile(event, id) {
   if (typeof event === 'number' || typeof event === 'string') {
     id = event;
@@ -471,6 +482,10 @@ async function downloadDesignFile(event, id) {
   event?.stopPropagation();
   try {
     const design = allDesigns.find(item => item.Design_ID === id);
+    if (!design?.PasswordProtected) {
+      startBrowserDownload(id);
+      return;
+    }
     const name = design?.Original_Name || `design_${id}`;
     const res = await fetch(`/api/designs/${id}/download`, {
       cache: 'no-store',
