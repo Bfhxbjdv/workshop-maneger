@@ -667,6 +667,35 @@ router.get('/agent/pricing', requirePermission('orders'), (req, res) => {
   res.json({ pricing });
 });
 
+// Debug: Check Orders table schema
+router.get('/debug/schema', requireAuth(), (req, res) => {
+  if (req.session.role !== 'Admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const cols = db.all("PRAGMA table_info(Orders)");
+    res.json({ columns: cols.map(c => c.name) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Debug: Run migration manually
+router.post('/debug/migrate', requireAuth(), (req, res) => {
+  if (req.session.role !== 'Admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const results = [];
+    try { db.exec("ALTER TABLE Orders ADD COLUMN Created_By INTEGER"); results.push('Created_By'); } catch {}
+    try { db.exec("ALTER TABLE Orders ADD COLUMN Approval_Status TEXT DEFAULT 'approved' CHECK(Approval_Status IN ('pending','approved','rejected'))"); results.push('Approval_Status'); } catch {}
+    try { db.exec("ALTER TABLE Orders ADD COLUMN Agent_Price REAL DEFAULT 0"); results.push('Agent_Price'); } catch {}
+    try { db.exec("ALTER TABLE Orders ADD COLUMN Agent_Commission REAL DEFAULT 0"); results.push('Agent_Commission'); } catch {}
+    try { db.exec("ALTER TABLE Orders ADD COLUMN Final_Price REAL DEFAULT 0"); results.push('Final_Price'); } catch {}
+    res.json({ success: true, added: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+module.exports = router;
+
 // Helper function for hasPermission
 function hasPermission(req, permission) {
   if (!req.session?.userId) return false;
