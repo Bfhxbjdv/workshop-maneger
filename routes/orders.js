@@ -2,11 +2,23 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const multer = require('multer');
 const db = require('../database/connection');
 const { requireAuth, requirePermission, canAccessOrder, orderScope } = require('../middleware/auth');
 const { deliverOrder } = require('../services/orderAccounting');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
+const AGENT_UPLOAD_DIR = path.join(__dirname, '..', 'Server_Storage', 'Agent_Images');
+if (!fs.existsSync(AGENT_UPLOAD_DIR)) fs.mkdirSync(AGENT_UPLOAD_DIR, { recursive: true });
+
+const agentStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, AGENT_UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, unique + path.extname(file.originalname));
+  }
+});
+const agentUpload = multer({ storage: agentStorage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.get('/', requireAuth(), (req, res) => {
   const page = parseInt(req.query.page) || 1;
@@ -43,14 +55,16 @@ router.get('/', requireAuth(), (req, res) => {
   else if (sort === 'price_desc') orderBy = 'o.Price DESC';
   else if (sort === 'price_asc') orderBy = 'o.Price ASC';
 
-  const orders = db.all(`
+const orders = db.all(`
     SELECT o.*, c.Full_Name as Client_Name, c.Phone_Number,
            i.Material_Name, i.Thickness,
-      (SELECT COUNT(*) FROM Order_Files f WHERE f.Task_ID=o.Task_ID) as File_Count,
-      (SELECT GROUP_CONCAT(om.Material_ID || ':' || om.Quantity, '|') FROM Order_Materials om WHERE om.Task_ID=o.Task_ID) as Materials_Data
+           u.Name as Agent_Name,
+           (SELECT COUNT(*) FROM Order_Files f WHERE f.Task_ID=o.Task_ID) as File_Count,
+           (SELECT GROUP_CONCAT(om.Material_ID || ':' || om.Quantity, '|') FROM Order_Materials om WHERE om.Task_ID=o.Task_ID) as Materials_Data
     FROM Orders o
     LEFT JOIN Clients c ON o.Client_ID = c.Client_ID
     LEFT JOIN Inventory i ON o.Material_ID = i.Material_ID
+    LEFT JOIN Users u ON o.Created_By = u.User_ID
     ${whereClause}
     ORDER BY ${orderBy}
     LIMIT ? OFFSET ?
@@ -74,20 +88,28 @@ router.get('/', requireAuth(), (req, res) => {
 });
 
 router.post('/', requirePermission('orders'), (req, res) => {
-  if (!['Admin', 'Designer', 'Custom'].includes(req.session.role)) {
-    return res.status(403).json({ error: 'إنشاء الطلبات متاح للمصمم أو المدير فقط' });
+  const isAgent = req.session.role === 'Agent';
+  if (!['Admin', 'Designer', 'Custom', 'Agent'].includes(req.session.role)) {
+    return res.status(403).json({ error: 'إنشاء الطلبات غير متاح لهذا الدور' });
   }
-  const { Client_ID, Machine_Type, Materials, Notes } = req.body;
+  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
   const machineType = (Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
 
+  const initialStatus = isAgent ? 'بانتظار الموافقة' : 'قيد التصميم';
+  const approvalStatus = isAgent ? 'pending' : 'approved';
+
   const result = db.run(
-    `INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes)
-     VALUES (?, ?, ?, 'قيد التصميم', ?)`,
-    [Client_ID, req.session.userId, machineType, Notes || '']
+    `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [Client_ID, isAgent ? null : req.session.userId, req.session.userId, machineType, initialStatus, approvalStatus, Notes || '']
   );
 
   if (!result.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
+
+  if (isAgent && Sheets) {
+    db.run("UPDATE Orders SET Material_Qty = ? WHERE Task_ID = ?", [parseFloat(Sheets) || 0, result.lastId]);
+  }
 
   if (Materials && Array.isArray(Materials) && Materials.length > 0) {
     Materials.forEach(m => {
@@ -97,12 +119,34 @@ router.post('/', requirePermission('orders'), (req, res) => {
     });
   }
 
+  if (isAgent && Image_IDs && Array.isArray(Image_IDs) && Image_IDs.length > 0) {
+    Image_IDs.forEach(imgId => {
+      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Uploaded_By) VALUES (?, 'agent_image', 'agent_image', ?, 'agent_image', ?)",
+        [result.lastId, imgId, req.session.userId]);
+    });
+  }
+  if (isAgent && Shapes && Array.isArray(Shapes) && Shapes.length > 0) {
+    Shapes.forEach(shapeId => {
+      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Uploaded_By) VALUES (?, 'agent_shape', 'agent_shape', ?, 'agent_shape', ?)",
+        [result.lastId, shapeId, req.session.userId]);
+    });
+  }
+
   const order = db.get(`
     SELECT o.*, c.Full_Name as Client_Name
     FROM Orders o
     LEFT JOIN Clients c ON o.Client_ID = c.Client_ID
     WHERE o.Task_ID = ?
   `, [result.lastId]);
+
+  if (isAgent) {
+    const admins = db.all("SELECT User_ID FROM Users WHERE Role IN ('Admin', 'Custom')");
+    const designers = db.all("SELECT User_ID FROM Users WHERE Role = 'Designer'");
+    [...admins, ...designers].forEach(u => {
+      db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
+        [result.lastId, `طلب جديد من الوكيل يحتاج موافقة: #${result.lastId}`, 'warning']);
+    });
+  }
 
   res.json(order);
 });
@@ -358,3 +402,147 @@ router.get('/:id/receipt/pdf', requireAuth(), async (req, res) => {
 });
 
 module.exports = router;
+
+// Agent Image Management
+router.post('/agent/images', requirePermission('orders'), agentUpload.array('images'), (req, res) => {
+  if (req.session.role !== 'Agent' && req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  if (!req.files || req.files.length === 0) {
+    return res.status(400).json({ error: 'لم يتم رفع أي صور' });
+  }
+  const { category } = req.body;
+  const results = req.files.map(f => {
+    const result = db.run(
+      `INSERT INTO Agent_Images (Category, Original_Name, Stored_Name, File_Path, File_Size, Uploaded_By)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [category || 'عام', f.originalname, f.filename, f.path, f.size, req.session.userId]
+    );
+    return { Image_ID: result.lastId, filename: f.filename, category: category || 'عام' };
+  });
+  res.json({ success: true, images: results });
+});
+
+router.get('/agent/images', requirePermission('orders'), (req, res) => {
+  const { category } = req.query;
+  let sql = 'SELECT * FROM Agent_Images';
+  let params = [];
+  if (category) {
+    sql += ' WHERE Category = ?';
+    params.push(category);
+  }
+  sql += ' ORDER BY Created_At DESC';
+  const images = db.all(sql, params);
+  res.json({ images });
+});
+
+router.delete('/agent/images/:id', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Agent' && req.session.role !== 'Admin') {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  const img = db.get("SELECT * FROM Agent_Images WHERE Image_ID = ?", [req.params.id]);
+  if (!img) return res.status(404).json({ error: 'الصورة غير موجودة' });
+  try { fs.unlinkSync(img.File_Path); } catch {}
+  db.run("DELETE FROM Agent_Images WHERE Image_ID = ?", [req.params.id]);
+  res.json({ success: true });
+});
+
+// Agent Shapes
+router.post('/agent/shapes', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Agent' && req.session.role !== 'Admin') {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  const { name, description, image_id } = req.body;
+  if (!name) return res.status(400).json({ error: 'اسم الشكل مطلوب' });
+  const result = db.run(
+    `INSERT INTO Agent_Shapes (Name, Description, Image_ID) VALUES (?, ?, ?)`,
+    [name, description || '', image_id || null]
+  );
+  res.json({ success: true, Shape_ID: result.lastId });
+});
+
+router.get('/agent/shapes', requirePermission('orders'), (req, res) => {
+  const shapes = db.all("SELECT s.*, i.File_Path as Image_Path FROM Agent_Shapes s LEFT JOIN Agent_Images i ON s.Image_ID = i.Image_ID ORDER BY s.Created_At DESC");
+  res.json({ shapes });
+});
+
+router.delete('/agent/shapes/:id', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Agent' && req.session.role !== 'Admin') {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  db.run("DELETE FROM Agent_Shapes WHERE Shape_ID = ?", [req.params.id]);
+  res.json({ success: true });
+});
+
+// Order Approval (Admin/Designer)
+router.put('/:id/approve', requirePermission('orders'), (req, res) => {
+  if (!['Admin', 'Designer', 'Custom'].includes(req.session.role)) {
+    return res.status(403).json({ error: 'الموافقة متاحة للمدير والمصمم فقط' });
+  }
+  const { action, designer_id } = req.body; // action: 'approve' or 'reject'
+  const order = db.get("SELECT * FROM Orders WHERE Task_ID = ?", [req.params.id]);
+  if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+  if (order.Approval_Status !== 'pending') {
+    return res.status(400).json({ error: 'هذا الطلب ليس بانتظار الموافقة' });
+  }
+
+  if (action === 'approve') {
+    const assignedDesigner = designer_id || (req.session.role === 'Designer' ? req.session.userId : null);
+    db.run("UPDATE Orders SET Status = 'قيد التصميم', Approval_Status = 'approved', Designer_ID = COALESCE(?, Designer_ID) WHERE Task_ID = ?",
+      [assignedDesigner, req.params.id]);
+    db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
+      [req.params.id, `تم الموافقة على طلب الوكيل #${req.params.id}`, 'success']);
+  } else if (action === 'reject') {
+    const { reason } = req.body;
+    db.run("UPDATE Orders SET Status = 'ملغي', Approval_Status = 'rejected' WHERE Task_ID = ?", [req.params.id]);
+    db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
+      [req.params.id, `تم رفض طلب الوكيل #${req.params.id}${reason ? ': ' + reason : ''}`, 'danger']);
+  } else {
+    return res.status(400).json({ error: 'إجراء غير صالح' });
+  }
+
+  const updated = db.get("SELECT * FROM Orders WHERE Task_ID = ?", [req.params.id]);
+  if (global.io) global.io.emit('order-update', updated);
+  res.json({ success: true, order: updated });
+});
+
+// Get pending orders for Admin/Designer
+router.get('/pending', requirePermission('orders'), (req, res) => {
+  if (!['Admin', 'Designer', 'Custom'].includes(req.session.role)) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  const orders = db.all(`
+    SELECT o.*, c.Full_Name as Client_Name, u.Name as Agent_Name
+    FROM Orders o
+    LEFT JOIN Clients c ON o.Client_ID = c.Client_ID
+    LEFT JOIN Users u ON o.Created_By = u.User_ID
+    WHERE o.Approval_Status = 'pending'
+    ORDER BY o.Created_At DESC
+  `);
+  res.json({ orders });
+});
+
+// Helper function for hasPermission (since it's not exported from middleware here)
+// Serve Agent Image File
+router.get('/agent/images/:id/file', requireAuth(), (req, res) => {
+  const img = db.get("SELECT * FROM Agent_Images WHERE Image_ID = ?", [req.params.id]);
+  if (!img) return res.status(404).send('Image not found');
+  if (!fs.existsSync(img.File_Path)) return res.status(404).send('File not found');
+  res.sendFile(img.File_Path);
+});
+
+function hasPermission(req, permission) {
+  if (!req.session?.userId) return false;
+  if (req.session.role === 'Admin') return true;
+  if (req.session.role === 'Custom') {
+    const user = db.get("SELECT Permissions FROM Users WHERE User_ID=?", [req.session.userId]);
+    try { return !!JSON.parse(user?.Permissions || '{}')[permission]; } catch { return false; }
+  }
+  const standardRoles = {
+    Designer: ['orders', 'clients', 'inventory', 'invoices'],
+    Laser_Op: ['orders'],
+    Router_Op: ['orders'],
+    Agent: ['orders', 'clients']
+  };
+  return (standardRoles[req.session.role] || []).includes(permission);
+}

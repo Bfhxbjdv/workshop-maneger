@@ -132,6 +132,7 @@ app.get('/', (req, res) => {
   if (role === 'Designer') return res.render('designer', { user: res.locals.user });
   if (role === 'Laser_Op') return res.render('laser', { user: res.locals.user });
   if (role === 'Router_Op') return res.render('router', { user: res.locals.user });
+  if (role === 'Agent') return res.redirect('/agent');
   res.render('dashboard', { user: res.locals.user });
 });
 
@@ -158,6 +159,14 @@ app.get('/expenses', requirePermission('expenses'), (req, res) => {
 app.get('/designs', (req, res) => {
   if (!req.session.userId) return res.redirect('/login');
   res.render('designs', { user: res.locals.user });
+});
+
+app.get('/agent', (req, res) => {
+  if (!req.session.userId) return res.redirect('/login');
+  if (req.session.role !== 'Agent' && req.session.role !== 'Admin' && req.session.role !== 'Custom') {
+    return res.status(403).send('غير مصرح');
+  }
+  res.render('agent', { user: res.locals.user });
 });
 
 app.get('/account', (req, res) => {

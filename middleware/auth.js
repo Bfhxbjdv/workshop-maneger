@@ -10,7 +10,8 @@ function hasPermission(req, permission) {
   const standardRoles = {
     Designer: ['orders', 'clients', 'inventory', 'invoices'],
     Laser_Op: ['orders'],
-    Router_Op: ['orders']
+    Router_Op: ['orders'],
+    Agent: ['orders', 'clients']
   };
   return (standardRoles[req.session.role] || []).includes(permission);
 }
@@ -25,6 +26,7 @@ function canAccessOrder(req, order) {
   if (req.session.role === 'Designer') return Number(order.Designer_ID) === Number(req.session.userId);
   if (req.session.role === 'Laser_Op') return order.Machine_Type === 'Laser';
   if (req.session.role === 'Router_Op') return order.Machine_Type === 'Router';
+  if (req.session.role === 'Agent') return Number(order.Created_By) === Number(req.session.userId);
   return false;
 }
 
@@ -35,6 +37,7 @@ function orderScope(req, alias = 'o') {
   if (req.session.role === 'Designer') return { sql: `${alias}.Designer_ID = ?`, params: [req.session.userId] };
   if (req.session.role === 'Laser_Op') return { sql: `${alias}.Machine_Type = 'Laser'`, params: [] };
   if (req.session.role === 'Router_Op') return { sql: `${alias}.Machine_Type = 'Router'`, params: [] };
+  if (req.session.role === 'Agent') return { sql: `${alias}.Created_By = ?`, params: [req.session.userId] };
   return { sql: '1=0', params: [] };
 }
 
@@ -62,7 +65,8 @@ function requireAuth(roles = []) {
               'invoices': ['invoices'],
               'expenses': ['expenses'],
               'admin': ['admin'],
-              'users': ['users']
+              'users': ['users'],
+              'agent': ['orders', 'clients']
             };
             const requiredPerms = roles.flatMap(r => pageMap[r] || []);
             if (requiredPerms.some(p => perms[p])) return next();

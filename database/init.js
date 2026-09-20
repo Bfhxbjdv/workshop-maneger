@@ -8,7 +8,7 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS Users (
       User_ID INTEGER PRIMARY KEY AUTOINCREMENT,
       Name TEXT NOT NULL,
-      Role TEXT NOT NULL CHECK(Role IN ('Admin','Designer','Laser_Op','Router_Op','Custom')),
+      Role TEXT NOT NULL CHECK(Role IN ('Admin','Designer','Laser_Op','Router_Op','Custom','Agent')),
       Username TEXT UNIQUE NOT NULL,
       Password TEXT NOT NULL,
       Permissions TEXT DEFAULT '{}',
@@ -175,6 +175,27 @@ async function initDatabase() {
       FOREIGN KEY (User_ID) REFERENCES Users(User_ID) ON DELETE CASCADE,
       UNIQUE(Design_ID, User_ID)
     );
+
+    CREATE TABLE IF NOT EXISTS Agent_Images (
+      Image_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Category TEXT NOT NULL DEFAULT 'عام',
+      Original_Name TEXT NOT NULL,
+      Stored_Name TEXT NOT NULL,
+      File_Path TEXT NOT NULL,
+      File_Size REAL DEFAULT 0,
+      Uploaded_By INTEGER,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (Uploaded_By) REFERENCES Users(User_ID)
+    );
+
+    CREATE TABLE IF NOT EXISTS Agent_Shapes (
+      Shape_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Name TEXT NOT NULL,
+      Description TEXT,
+      Image_ID INTEGER,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (Image_ID) REFERENCES Agent_Images(Image_ID) ON DELETE SET NULL
+    );
   `);
 
   const existing = db.query("SELECT COUNT(*) as cnt FROM Users");
@@ -214,6 +235,16 @@ async function initDatabase() {
       FOREIGN KEY (Uploaded_By) REFERENCES Users(User_ID)
     )`);
     console.log('✅ Order_Files table ready');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Orders ADD COLUMN Created_By INTEGER");
+    console.log('✅ Added Created_By column to Orders');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Orders ADD COLUMN Approval_Status TEXT DEFAULT 'approved' CHECK(Approval_Status IN ('pending','approved','rejected'))");
+    console.log('✅ Added Approval_Status column to Orders');
   } catch (e) {}
 
   try {
