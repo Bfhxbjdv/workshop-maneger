@@ -221,6 +221,80 @@ async function initDatabase() {
       FOREIGN KEY (Pricing_ID) REFERENCES Product_Pricing(Pricing_ID) ON DELETE CASCADE,
       UNIQUE(Client_ID, Pricing_ID)
     );
+
+    CREATE TABLE IF NOT EXISTS Agent_Profiles (
+      Agent_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      User_ID INTEGER UNIQUE NOT NULL REFERENCES Users(User_ID),
+      Phone TEXT,
+      Email TEXT,
+      Territory TEXT,
+      Commission_Rate REAL DEFAULT 0.10,
+      Bank_Account TEXT,
+      IBAN TEXT,
+      Tax_Number TEXT,
+      Status TEXT DEFAULT 'active' CHECK(Status IN ('active','inactive','suspended')),
+      Hired_Date DATE DEFAULT CURRENT_DATE,
+      Notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS Agent_Stats (
+      Stat_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Agent_ID INTEGER NOT NULL REFERENCES Users(User_ID),
+      Stat_Date DATE NOT NULL,
+      Period_Type TEXT CHECK(Period_Type IN ('daily','weekly','monthly')),
+      Orders_Count INTEGER DEFAULT 0,
+      Total_Sheets REAL DEFAULT 0,
+      Total_Revenue REAL DEFAULT 0,
+      Total_Commission REAL DEFAULT 0,
+      Pending_Orders INTEGER DEFAULT 0,
+      Approved_Orders INTEGER DEFAULT 0,
+      Rejected_Orders INTEGER DEFAULT 0,
+      New_Clients INTEGER DEFAULT 0,
+      Active_Clients INTEGER DEFAULT 0,
+      UNIQUE(Agent_ID, Stat_Date, Period_Type)
+    );
+
+    CREATE TABLE IF NOT EXISTS Agent_Commissions (
+      Commission_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Agent_ID INTEGER NOT NULL REFERENCES Users(User_ID),
+      Order_ID INTEGER REFERENCES Orders(Task_ID),
+      Client_ID INTEGER REFERENCES Clients(Client_ID),
+      Commission_Amount REAL NOT NULL,
+      Commission_Type TEXT CHECK(Commission_Type IN ('order','client_bonus','milestone')),
+      Status TEXT DEFAULT 'pending' CHECK(Status IN ('pending','approved','paid','cancelled')),
+      Calculated_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      Approved_At DATETIME,
+      Approved_By INTEGER REFERENCES Users(User_ID),
+      Paid_At DATETIME,
+      Notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS Agent_Payouts (
+      Payout_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Agent_ID INTEGER NOT NULL REFERENCES Users(User_ID),
+      Amount REAL NOT NULL,
+      Period_Start DATE NOT NULL,
+      Period_End DATE NOT NULL,
+      Status TEXT DEFAULT 'pending' CHECK(Status IN ('pending','processing','completed','failed')),
+      Payment_Method TEXT,
+      Transaction_Ref TEXT,
+      Requested_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      Processed_At DATETIME,
+      Processed_By INTEGER REFERENCES Users(User_ID),
+      Notes TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS Agent_Activity_Log (
+      Log_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Agent_ID INTEGER NOT NULL REFERENCES Users(User_ID),
+      Action TEXT NOT NULL,
+      Entity_Type TEXT,
+      Entity_ID INTEGER,
+      Details TEXT,
+      IP_Address TEXT,
+      User_Agent TEXT,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   const existing = db.query("SELECT COUNT(*) as cnt FROM Users");
@@ -247,6 +321,21 @@ async function initDatabase() {
   try {
     db.exec("ALTER TABLE Clients ADD COLUMN Agent_Commission REAL DEFAULT 0");
     console.log('✅ Added Agent_Commission column to Clients');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Clients ADD COLUMN Agent_ID INTEGER REFERENCES Users(User_ID)");
+    console.log('✅ Added Agent_ID column to Clients');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Clients ADD COLUMN Assigned_At DATETIME DEFAULT CURRENT_TIMESTAMP");
+    console.log('✅ Added Assigned_At column to Clients');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Clients ADD COLUMN Source TEXT");
+    console.log('✅ Added Source column to Clients');
   } catch (e) {}
 
   try {
@@ -295,6 +384,16 @@ async function initDatabase() {
   try {
     db.exec("ALTER TABLE Orders ADD COLUMN Final_Price REAL DEFAULT 0");
     console.log('✅ Added Final_Price column to Orders');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Orders ADD COLUMN Agent_Approved_At DATETIME");
+    console.log('✅ Added Agent_Approved_At column to Orders');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Orders ADD COLUMN Agent_Approved_By INTEGER REFERENCES Users(User_ID)");
+    console.log('✅ Added Agent_Approved_By column to Orders');
   } catch (e) {}
 
   try {

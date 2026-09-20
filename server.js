@@ -119,6 +119,7 @@ app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/designs', require('./routes/designs'));
+app.use('/api/agents', require('./routes/agents'));
 app.use('/admin', require('./routes/admin'));
 
 // Page routes
@@ -167,6 +168,14 @@ app.get('/agent', (req, res) => {
     return res.status(403).send('غير مصرح');
   }
   res.render('agent', { user: res.locals.user });
+});
+
+app.get('/agents', requireAuth(['Admin']), (req, res) => {
+  res.render('agents', { user: res.locals.user });
+});
+
+app.get('/agents/:id', requireAuth(['Admin']), (req, res) => {
+  res.render('agent-detail', { user: res.locals.user, agentId: req.params.id });
 });
 
 app.get('/account', (req, res) => {

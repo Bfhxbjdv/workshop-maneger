@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>تفاصيل الوكيل</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/css/style.css?v=<%= assetVersion %>">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body class="agent-detail-page">
+  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="/agents"><i class="bi bi-arrow-right"></i> الوكلاء</a>
+      <span class="navbar-text text-white"><i class="bi bi-person-circle"></i> <%= user.name %></span>
+      <div>
+        <a href="/agents" class="btn btn-outline-light btn-sm"><i class="bi bi-arrow-right"></i> العودة</a>
+        <a href="/logout" class="btn btn-outline-light btn-sm ms-2">خروج</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="container-fluid px-4 py-3">
+    <!-- Agent Header -->
+    <div class="card mb-4" id="agentHeader">
+      <div class="card-body">
+        <div class="row align-items-center">
+          <div class="col-md-3 text-center text-md-start">
+            <div class="avatar-circle bg-primary d-inline-flex align-items-center justify-content-center mb-3 mx-auto mx-md-0" style="width:80px;height:80px;font-size:2rem">
+              <i class="bi bi-person-fill text-white"></i>
+            </div>
+            <h4 id="agentName" class="mb-1">-</h4>
+            <p class="text-muted mb-1" id="agentUsername">@username</p>
+            <span class="badge" id="agentStatusBadge">نشط</span>
+          </div>
+          <div class="col-md-9">
+            <div class="row g-3">
+              <div class="col-md-3">
+                <div class="stat-box text-center p-3 bg-light rounded">
+                  <h4 class="text-primary mb-0" id="statClients">-</h4>
+                  <small class="text-muted">العملاء</small>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="stat-box text-center p-3 bg-light rounded">
+                  <h4 class="text-info mb-0" id="statOrders">-</h4>
+                  <small class="text-muted">الطلبات</small>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="stat-box text-center p-3 bg-light rounded">
+                  <h4 class="text-success mb-0" id="statRevenue">-</h4>
+                  <small class="text-muted">الإيرادات</small>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="stat-box text-center p-3 bg-light rounded">
+                  <h4 class="text-warning mb-0" id="statCommission">-</h4>
+                  <small class="text-muted">العمولة</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <ul class="nav nav-tabs mb-4" id="agentTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab">
+          <i class="bi bi-speedometer2"></i> نظرة عامة
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="clients-tab" data-bs-toggle="tab" data-bs-target="#clients" type="button" role="tab">
+          <i class="bi bi-people"></i> العملاء
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders" type="button" role="tab">
+          <i class="bi bi-list-task"></i> الطلبات
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="commissions-tab" data-bs-toggle="tab" data-bs-target="#commissions" type="button" role="tab">
+          <i class="bi bi-percent"></i> العمولات
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="payouts-tab" data-bs-toggle="tab" data-bs-target="#payouts" type="button" role="tab">
+          <i class="bi bi-cash-stack"></i> الصرف
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="activity-tab" data-bs-toggle="tab" data-bs-target="#activity" type="button" role="tab">
+          <i class="bi bi-clock-history"></i> النشاط
+        </button>
+      </li>
+    </ul>
+
+    <div class="tab-content" id="agentTabContent">
+      <!-- Overview Tab -->
+      <div class="tab-pane fade show active" id="overview" role="tabpanel">
+        <div class="row g-3 mb-4">
+          <div class="col-md-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <i class="bi bi-people display-6 text-primary"></i>
+                <h5 class="mt-2" id="ovClients">-</h5>
+                <small class="text-muted">إجمالي العملاء</small>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <i class="bi bi-list-task display-6 text-info"></i>
+                <h5 class="mt-2" id="ovOrders">-</h5>
+                <small class="text-muted">إجمالي الطلبات</small>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <i class="bi bi-currency-dollar display-6 text-success"></i>
+                <h5 class="mt-2" id="ovRevenue">-</h5>
+                <small class="text-muted">إجمالي الإيرادات</small>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <i class="bi bi-percent display-6 text-warning"></i>
+                <h5 class="mt-2" id="ovCommission">-</h5>
+                <small class="text-muted">إجمالي العمولة</small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-3 mb-4">
+          <div class="col-md-3">
+            <div class="card h-100 border-warning">
+              <div class="card-body text-center">
+                <i class="bi bi-hourglass-split display-6 text-warning"></i>
+                <h5 class="mt-2" id="ovPending">-</h5>
+                <small class="text-muted">بانتظار الموافقة</small>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card h-100 border-success">
+              <div class="card-body text-center">
+                <i class="bi bi-check-circle display-6 text-success"></i>
+                <h5 class="mt-2" id="ovApproved">-</h5>
+                <small class="text-muted">مقبول</small>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card h-100 border-danger">
+              <div class="card-body text-center">
+                <i class="bi bi-x-circle display-6 text-danger"></i>
+                <h5 class="mt-2" id="ovRejected">-</h5>
+                <small class="text-muted">مرفوض</small>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <i class="bi bi-people display-6 text-secondary"></i>
+                <h5 class="mt-2" id="ovNewClients">-</h5>
+                <small class="text-muted">عملاء جدد (30 يوم)</small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-lg-8">
+            <div class="card h-100">
+              <div class="card-header"><i class="bi bi-graph-up"></i> اتجاه الطلبات والإيرادات (30 يوم)</div>
+              <div class="card-body">
+                <canvas id="trendChart" style="max-height:300px"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="card h-100">
+              <div class="card-header"><i class="bi bi-pie-chart"></i> توزيع الحالات</div>
+              <div class="card-body">
+                <canvas id="statusChart" style="max-height:300px"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-3 mt-3">
+          <div class="col-lg-8">
+            <div class="card h-100">
+              <div class="card-header"><i class="bi bi-bar-chart"></i> مقارنة شهرية (12 شهر)</div>
+              <div class="card-body">
+                <canvas id="monthlyChart" style="max-height:300px"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="card h-100">
+              <div class="card-header"><i class="bi bi-award"></i> أفضل 5 عملاء</div>
+              <div class="card-body" style="max-height:300px;overflow:auto" id="topClientsList">
+                <div class="text-center text-muted py-3">جاري التحميل...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Clients Tab -->
+      <div class="tab-pane fade" id="clients" role="tabpanel">
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+          <h4 class="mb-0">عملاء الوكيل</h4>
+          <div class="d-flex gap-2">
+            <input type="text" id="clientSearch" class="form-control" style="width:250px" placeholder="بحث..." oninput="debouncedClientSearch()">
+            <button class="btn btn-success" onclick="exportAgentClients()"><i class="bi bi-download"></i> تصدير</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>#</th>
+                    <th>الاسم</th>
+                    <th>الهاتف</th>
+                    <th>الطلبات</th>
+                    <th>إجمالي الإنفاق</th>
+                    <th>تاريخ الإضافة</th>
+                    <th>خيارات</th>
+                  </tr>
+                </thead>
+                <tbody id="clientsTableBody"></tbody>
+              </table>
+            </div>
+            <div class="card-footer p-3">
+              <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="clientsPagination"></ul></nav>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Orders Tab -->
+      <div class="tab-pane fade" id="orders" role="tabpanel">
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+          <h4 class="mb-0">طلبات الوكيل</h4>
+          <div class="d-flex gap-2">
+            <select id="orderStatusFilter" class="form-select form-select-sm w-auto" onchange="loadAgentOrders()">
+              <option value="">كل الحالات</option>
+              <option value="بانتظار الموافقة">بانتظار الموافقة</option>
+              <option value="قيد التصميم">قيد التصميم</option>
+              <option value="جاهز للقص">جاهز للقص</option>
+              <option value="قيد التنفيذ">قيد التنفيذ</option>
+              <option value="تم الانتهاء من القص">تم الانتهاء من القص</option>
+              <option value="تم التسليم">تم التسليم</option>
+              <option value="ملغي">ملغي</option>
+            </select>
+            <button class="btn btn-outline-secondary" onclick="exportAgentOrders()"><i class="bi bi-download"></i> تصدير</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>#</th>
+                    <th>العميل</th>
+                    <th>الماكينة</th>
+                    <th>الكمية</th>
+                    <th>السعر/لوح</th>
+                    <th>العمولة</th>
+                    <th>الإجمالي</th>
+                    <th>الحالة</th>
+                    <th>الموافقة</th>
+                    <th>التاريخ</th>
+                    <th>خيارات</th>
+                  </tr>
+                </thead>
+                <tbody id="ordersTableBody"></tbody>
+              </table>
+            </div>
+            <div class="card-footer p-3">
+              <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="ordersPagination"></ul></nav>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Commissions Tab -->
+      <div class="tab-pane fade" id="commissions" role="tabpanel">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h4 class="mb-0">العمولات</h4>
+          <div class="d-flex gap-2">
+            <select id="commissionStatusFilter" class="form-select form-select-sm w-auto" onchange="loadAgentCommissions()">
+              <option value="">كل الحالات</option>
+              <option value="pending">بانتظار الاعتماد</option>
+              <option value="approved">مُعتمد</option>
+              <option value="paid">مدفوع</option>
+              <option value="cancelled">ملغي</option>
+            </select>
+            <button class="btn btn-outline-secondary" onclick="exportAgentCommissions()"><i class="bi bi-download"></i> تصدير</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>إجمالي العمولات: <span class="text-success fw-bold" id="totalCommissionAmount">0</span> ريال</span>
+            <select id="commissionStatusFilter2" class="form-select form-select-sm w-auto" onchange="loadAgentCommissions()">
+              <option value="">كل الحالات</option>
+              <option value="pending">بانتظار الاعتماد</option>
+              <option value="approved">مُعتمد</option>
+              <option value="paid">مدفوع</option>
+              <option value="cancelled">ملغي</option>
+            </select>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>#</th>
+                    <th>الطلب</th>
+                    <th>العميل</th>
+                    <th>النوع</th>
+                    <th>المبلغ</th>
+                    <th>الحالة</th>
+                    <th>تاريخ الحساب</th>
+                    <th>تاريخ الاعتماد</th>
+                    <th>خيارات</th>
+                  </tr>
+                </thead>
+                <tbody id="commissionsTableBody"></tbody>
+              </table>
+            </div>
+            <div class="card-footer p-3">
+              <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="commissionsPagination"></ul></nav>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Payouts Tab -->
+      <div class="tab-pane fade" id="payouts" role="tabpanel">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h4 class="mb-0">سجل الصرف</h4>
+          <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#payoutModal"><i class="bi bi-plus"></i> تسجيل صرف</button>
+        </div>
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>إجمالي المصروف: <span class="text-danger fw-bold" id="totalPayoutAmount">0</span> ريال</span>
+            <select id="payoutStatusFilter" class="form-select form-select-sm w-auto" onchange="loadAgentPayouts()">
+              <option value="">كل الحالات</option>
+              <option value="pending">بانتظار المعالجة</option>
+              <option value="processing">قيد المعالجة</option>
+              <option value="completed">مكتمل</option>
+              <option value="failed">فشل</option>
+            </select>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>#</th>
+                    <th>المبلغ</th>
+                    <th>الفترة</th>
+                    <th>طريقة الدفع</th>
+                    <th>مرجع التحويل</th>
+                    <th>الحالة</th>
+                    <th>تاريخ الطلب</th>
+                    <th>تاريخ المعالجة</th>
+                    <th>خيارات</th>
+                  </tr>
+                </thead>
+                <tbody id="payoutsTableBody"></tbody>
+              </table>
+            </div>
+            <div class="card-footer p-3">
+              <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="payoutsPagination"></ul></nav>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Tab -->
+      <div class="tab-pane fade" id="activity" role="tabpanel">
+        <div class="card">
+          <div class="card-body p-0">
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>#</th>
+                    <th>الإجراء</th>
+                    <th>النوع</th>
+                    <th>الكيان</th>
+                    <th>التفاصيل</th>
+                    <th>التاريخ</th>
+                  </tr>
+                </thead>
+                <tbody id="activityTableBody"></tbody>
+              </table>
+            </div>
+            <div class="card-footer p-3">
+              <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="activityPagination"></ul></nav>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Payout Modal -->
+  <div class="modal fade" id="payoutModal">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white"><h5><i class="bi bi-cash"></i> تسجيل صرف عمولة</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <form id="payoutForm">
+          <div class="modal-body">
+            <div class="mb-2"><label class="form-label">المبلغ (ريال)</label><input type="number" id="payoutAmount" class="form-control" step="0.01" required></div>
+            <div class="row g-2 mb-2">
+              <div class="col-md-6"><label class="form-label">بداية الفترة</label><input type="date" id="payoutPeriodStart" class="form-control" required></div>
+              <div class="col-md-6"><label class="form-label">نهاية الفترة</label><input type="date" id="payoutPeriodEnd" class="form-control" required></div>
+            </div>
+            <div class="mb-2"><label class="form-label">طريقة الدفع</label><input type="text" id="payoutPaymentMethod" class="form-control" placeholder="تحويل بنكي، نقدي، شيك..."></div>
+            <div class="mb-2"><label class="form-label">مرجع التحويل</label><input type="text" id="payoutTransactionRef" class="form-control" placeholder="رقم العملية البنكية..."></div>
+            <div class="mb-2"><label class="form-label">ملاحظات</label><textarea id="payoutNotes" class="form-control" rows="2"></textarea></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> تسجيل</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/main.js"></script>
+  <script src="/js/agents.js?v=<%= assetVersion %>"></script>
+  <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
+</body>
+</html>

@@ -87,6 +87,7 @@
                   <option value="Designer">مصمم</option>
                   <option value="Laser_Op">عامل ليزر</option>
                   <option value="Router_Op">عامل راوتر</option>
+                  <option value="Agent">وكيل</option>
                   <option value="Custom">صلاحيات مخصصة</option>
                 </select>
               </div>
@@ -167,6 +168,7 @@
     function togglePermissions() {
       const role = document.getElementById('userRole').value;
       const permsDiv = document.getElementById('customPermissions');
+      // Agent has fixed permissions (orders, clients), no custom perms needed
       permsDiv.style.display = role === 'Custom' ? 'block' : 'none';
     }
 
