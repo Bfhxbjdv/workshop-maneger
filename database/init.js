@@ -196,6 +196,31 @@ async function initDatabase() {
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (Image_ID) REFERENCES Agent_Images(Image_ID) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS Product_Pricing (
+      Pricing_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Product_Name TEXT NOT NULL,
+      Category TEXT DEFAULT 'عام',
+      Base_Price REAL NOT NULL DEFAULT 0,
+      Unit TEXT DEFAULT 'لوح',
+      Description TEXT,
+      Is_Active INTEGER DEFAULT 1,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      Updated_At DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS Client_Pricing (
+      ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Client_ID INTEGER NOT NULL,
+      Pricing_ID INTEGER NOT NULL,
+      Agent_Price REAL NOT NULL,
+      Agent_Commission REAL DEFAULT 0,
+      Final_Price REAL NOT NULL,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (Client_ID) REFERENCES Clients(Client_ID) ON DELETE CASCADE,
+      FOREIGN KEY (Pricing_ID) REFERENCES Product_Pricing(Pricing_ID) ON DELETE CASCADE,
+      UNIQUE(Client_ID, Pricing_ID)
+    );
   `);
 
   const existing = db.query("SELECT COUNT(*) as cnt FROM Users");
@@ -212,6 +237,16 @@ async function initDatabase() {
   try {
     db.exec("ALTER TABLE Users ADD COLUMN Permissions TEXT DEFAULT '{}'");
     console.log('✅ Added Permissions column');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Clients ADD COLUMN Created_By INTEGER");
+    console.log('✅ Added Created_By column to Clients');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Clients ADD COLUMN Agent_Commission REAL DEFAULT 0");
+    console.log('✅ Added Agent_Commission column to Clients');
   } catch (e) {}
 
   try {
@@ -245,6 +280,21 @@ async function initDatabase() {
   try {
     db.exec("ALTER TABLE Orders ADD COLUMN Approval_Status TEXT DEFAULT 'approved' CHECK(Approval_Status IN ('pending','approved','rejected'))");
     console.log('✅ Added Approval_Status column to Orders');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Orders ADD COLUMN Agent_Price REAL DEFAULT 0");
+    console.log('✅ Added Agent_Price column to Orders');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Orders ADD COLUMN Agent_Commission REAL DEFAULT 0");
+    console.log('✅ Added Agent_Commission column to Orders');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Orders ADD COLUMN Final_Price REAL DEFAULT 0");
+    console.log('✅ Added Final_Price column to Orders');
   } catch (e) {}
 
   try {

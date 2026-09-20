@@ -13,6 +13,9 @@
     .image-card img { height: 180px; object-fit: cover; }
     .qty-input { width: 80px; }
     .sticky-footer { position: sticky; bottom: 0; background: white; border-top: 1px solid #dee2e6; padding: 1rem; z-index: 100; }
+    .pricing-card { transition: all 0.2s; cursor: pointer; border: 2px solid transparent; }
+    .pricing-card.selected { border-color: #0d6efd; background: #f0f7ff; }
+    .price-input { width: 100px; }
   </style>
 </head>
 <body class="agent-page">
@@ -69,6 +72,30 @@
                 <div id="quantitiesContainer" class="row g-2 mt-2"></div>
               </div>
 
+              <!-- Pricing Section -->
+              <div class="mb-3">
+                <label class="form-label fw-bold"><i class="bi bi-currency-dollar"></i> اختيار المنتج والسعر <span class="text-danger">*</span></label>
+                <div class="form-text">اختر منتجاً من قائمة الأسعار المعتمدة، وسيتم تعبئة السعر الأساسي. يمكنك إضافة عمولتك.</div>
+                <div id="pricingSelector" class="row g-2 mt-2" style="max-height:300px; overflow:auto;">
+                  <div class="col-12 text-center text-muted py-4">جاري تحميل قائمة الأسعار...</div>
+                </div>
+                <div class="row g-2 mt-2" id="priceInputs" style="display:none;">
+                  <div class="col-md-4">
+                    <label class="form-label fw-bold">السعر الأساسي (للوح)</label>
+                    <input type="number" id="basePrice" class="form-control" readonly>
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label fw-bold">عمولتك (للوح)</label>
+                    <input type="number" id="agentCommission" class="form-control" placeholder="مثال: 50" step="0.01" min="0" required>
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label fw-bold">السعر النهائي للعميل (للوح)</label>
+                    <input type="number" id="finalPrice" class="form-control" readonly>
+                  </div>
+                </div>
+                <input type="hidden" id="selectedPricingId" name="Pricing_ID">
+              </div>
+
               <div class="mb-3">
                 <label class="form-label">ملاحظات إضافية</label>
                 <textarea id="orderNotes" class="form-control" rows="2" placeholder="أي ملاحظات للطلب..."></textarea>
@@ -76,11 +103,14 @@
             </form>
           </div>
           <div class="card-footer sticky-footer">
-            <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
               <span class="text-muted small">سيتم إرسال الطلب للموافقة من الإدارة</span>
-              <button type="button" class="btn btn-success btn-lg px-4" id="submitBtn" disabled>
-                <i class="bi bi-send"></i> إرسال للاعتماد
-              </button>
+              <div class="d-flex gap-2">
+                <span class="badge bg-success fs-6 px-3 py-2" id="totalPriceBadge" style="display:none;">الإجمالي: <span id="totalPrice">0</span> ريال</span>
+                <button type="button" class="btn btn-success btn-lg px-4" id="submitBtn" disabled>
+                  <i class="bi bi-send"></i> إرسال للاعتماد
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -98,6 +128,7 @@
               <li>اختر نوع الماكينة (ليزر/راوتر)</li>
               <li>انقر على الصور التي تريدها من أعمالنا (يمكن اختيار عدة صور)</li>
               <li>أدخل الكمية <strong>باللوح (Sheet)</strong> لكل صورة</li>
+              <li>اختر منتجاً من قائمة الأسعار وأضف عمولتك</li>
               <li>اضغط <strong>"إرسال للاعتماد"</strong></li>
             </ol>
             <hr>
@@ -148,6 +179,8 @@
     let selectedImageIds = [];
     let allImages = [];
     let allClients = [];
+    let allPricing = [];
+    let selectedPricingId = null;
     let clientsLoaded = false;
 
     // Load images
@@ -158,6 +191,16 @@
         allImages = data.images || [];
         renderImages();
       } catch (e) { console.error('loadImages:', e); }
+    }
+
+    // Load pricing from admin
+    async function loadPricing() {
+      try {
+        const res = await fetch('/api/orders/agent/pricing', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const data = await res.json();
+        allPricing = data.pricing || [];
+        renderPricing();
+      } catch (e) { console.error('loadPricing:', e); }
     }
 
     function renderImages() {
@@ -189,6 +232,64 @@
       updateQuantitiesUI();
     }
 
+    function renderPricing() {
+      const container = document.getElementById('pricingSelector');
+      if (!allPricing.length) {
+        container.innerHTML = '<div class="col-12 text-center text-muted py-4">لا توجد قائمة أسعار متاحة. تواصل مع الإدارة لإضافة منتجات.</div>';
+        return;
+      }
+      container.innerHTML = '';
+      allPricing.forEach(p => {
+        const isSelected = selectedPricingId === p.Pricing_ID;
+        const col = document.createElement('div');
+        col.className = 'col-12 col-md-6 col-lg-4';
+        col.innerHTML = `
+          <div class="card h-100 pricing-card ${isSelected ? 'selected' : ''}" onclick="selectPricing(${p.Pricing_ID}, ${p.Base_Price}, this)">
+            <div class="card-body p-3">
+              <div class="fw-bold">${p.Product_Name}</div>
+              <small class="text-muted">${p.Category} · ${p.Unit}</small>
+              ${p.Description ? `<div class="small text-muted mt-1">${p.Description}</div>` : ''}
+              <hr class="my-2">
+              <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-bold text-primary">${p.Base_Price.toLocaleString()} ريال/${p.Unit}</span>
+                ${isSelected ? '<i class="bi bi-check-circle-fill text-primary fs-5"></i>' : ''}
+              </div>
+            </div>
+          </div>
+        `;
+        container.appendChild(col);
+      });
+    }
+
+    function selectPricing(id, basePrice, card) {
+      selectedPricingId = id;
+      document.getElementById('selectedPricingId').value = id;
+      document.getElementById('basePrice').value = basePrice.toLocaleString();
+      document.getElementById('priceInputs').style.display = 'flex';
+      document.getElementById('agentCommission').value = '';
+      document.getElementById('finalPrice').value = '';
+      document.querySelectorAll('.pricing-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      calculateTotal();
+      updateSubmitButton();
+    }
+
+    function calculateTotal() {
+      const basePrice = parseFloat(document.getElementById('basePrice').value.replace(/,/g, '')) || 0;
+      const commission = parseFloat(document.getElementById('agentCommission').value) || 0;
+      const finalPrice = basePrice + commission;
+      document.getElementById('finalPrice').value = finalPrice.toLocaleString();
+      
+      // Calculate total for all selected images
+      let totalSheets = 0;
+      document.querySelectorAll('.qty-input').forEach(i => {
+        totalSheets += parseFloat(i.value) || 0;
+      });
+      const total = finalPrice * totalSheets;
+      document.getElementById('totalPrice').textContent = total.toLocaleString();
+      document.getElementById('totalPriceBadge').style.display = totalSheets > 0 ? 'inline-block' : 'none';
+    }
+
     function toggleImage(id, card) {
       if (selectedImageIds.includes(id)) {
         selectedImageIds = selectedImageIds.filter(x => x !== id);
@@ -206,6 +307,7 @@
       document.getElementById('selectedImages').value = selectedImageIds.join(',');
       updateQuantitiesUI();
       updateSubmitButton();
+      calculateTotal();
     }
 
     function updateQuantitiesUI() {
@@ -237,6 +339,7 @@
         `;
         container.appendChild(col);
       });
+      calculateTotal();
     }
 
     function updateSubmitButton() {
@@ -244,7 +347,8 @@
       const hasClient = document.getElementById('clientId').value;
       const hasImages = selectedImageIds.length > 0;
       const hasQtys = Array.from(document.querySelectorAll('.qty-input')).every(i => i.value && parseFloat(i.value) > 0);
-      btn.disabled = !(hasClient && hasImages && hasQtys);
+      const hasPricing = selectedPricingId && document.getElementById('agentCommission').value && document.getElementById('finalPrice').value;
+      btn.disabled = !(hasClient && hasImages && hasQtys && hasPricing);
     }
 
     // Client search
@@ -321,7 +425,7 @@
           item.innerHTML = `
             <div>
               <div class="fw-bold">#${o.Task_ID} - ${o.Client_Name || 'عميل'}</div>
-              <small class="text-muted">${o.Machine_Type} · ${o.Material_Qty || 0} لوح</small>
+              <small class="text-muted">${o.Machine_Type} · ${o.Material_Qty || 0} لوح · ${o.Final_Price || 0} ريال/لوح</small>
             </div>
             <span class="badge ${badge}">${o.Status}</span>
           `;
@@ -339,12 +443,20 @@
       const qtys = {};
       document.querySelectorAll('.qty-input').forEach(i => { qtys[i.dataset.imageId] = parseFloat(i.value); });
 
+      const basePrice = parseFloat(document.getElementById('basePrice').value.replace(/,/g, '')) || 0;
+      const agentCommission = parseFloat(document.getElementById('agentCommission').value) || 0;
+      const finalPrice = parseFloat(document.getElementById('finalPrice').value.replace(/,/g, '')) || 0;
+
       const payload = {
         Client_ID: parseInt(clientId),
         Machine_Type: machineType,
         Notes: notes,
         Image_IDs: selectedImageIds,
-        Quantities: qtys
+        Quantities: qtys,
+        Pricing_ID: selectedPricingId,
+        Agent_Price: basePrice,
+        Agent_Commission: agentCommission,
+        Final_Price: finalPrice
       };
 
       document.getElementById('submitBtn').disabled = true;
@@ -361,10 +473,16 @@
           alert('✅ تم إرسال الطلب للاعتماد بنجاح!\nرقم الطلب: #' + data.Task_ID);
           document.getElementById('agentOrderForm').reset();
           selectedImageIds = [];
+          selectedPricingId = null;
           document.getElementById('selectedImages').value = '';
+          document.getElementById('selectedPricingId').value = '';
+          document.getElementById('priceInputs').style.display = 'none';
+          document.getElementById('totalPriceBadge').style.display = 'none';
           document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected'));
           document.querySelectorAll('.image-card .badge').forEach(b => b.remove());
+          document.querySelectorAll('.pricing-card').forEach(c => c.classList.remove('selected'));
           renderImages();
+          renderPricing();
           loadMyOrders();
         } else {
           alert(data.error || 'فشل الإرسال');
@@ -387,10 +505,12 @@
         document.getElementById('clientResults').style.display = 'none';
       }
     });
-    document.querySelectorAll('.qty-input').forEach(i => i.addEventListener('input', updateSubmitButton));
+    document.getElementById('agentCommission').addEventListener('input', calculateTotal);
+    document.querySelectorAll('.qty-input').forEach(i => i.addEventListener('input', () => { updateSubmitButton(); calculateTotal(); }));
 
     // Init
     loadImages();
+    loadPricing();
     loadMyOrders();
   </script>
   <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>

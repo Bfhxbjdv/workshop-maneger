@@ -20,6 +20,17 @@ const agentStorage = multer.diskStorage({
 });
 const agentUpload = multer({ storage: agentStorage, limits: { fileSize: 10 * 1024 * 1024 } });
 
+// Helper: filter clients by agent
+function getClientsForUser(req) {
+  if (req.session.role === 'Admin' || (req.session.role === 'Custom' && hasPermission(req, 'clients'))) {
+    return { sql: '1=1', params: [] };
+  }
+  if (req.session.role === 'Agent') {
+    return { sql: 'Created_By = ?', params: [req.session.userId] };
+  }
+  return { sql: '1=0', params: [] };
+}
+
 router.get('/', requireAuth(), (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 50;
@@ -92,22 +103,29 @@ router.post('/', requirePermission('orders'), (req, res) => {
   if (!['Admin', 'Designer', 'Custom', 'Agent'].includes(req.session.role)) {
     return res.status(403).json({ error: 'إنشاء الطلبات غير متاح لهذا الدور' });
   }
-  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs, Quantities } = req.body;
+  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs, Quantities, Agent_Price, Agent_Commission, Final_Price } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
   const machineType = (Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
 
   const initialStatus = isAgent ? 'بانتظار الموافقة' : 'قيد التصميم';
   const approvalStatus = isAgent ? 'pending' : 'approved';
 
+  const agentPrice = isAgent ? (parseFloat(Agent_Price) || 0) : 0;
+  const agentCommission = isAgent ? (parseFloat(Agent_Commission) || 0) : 0;
+  const finalPrice = isAgent ? (parseFloat(Final_Price) || agentPrice + agentCommission) : 0;
+
   const result = db.run(
-    `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [Client_ID, isAgent ? null : req.session.userId, req.session.userId, machineType, initialStatus, approvalStatus, Notes || '']
+    `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes, Agent_Price, Agent_Commission, Final_Price)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [Client_ID, isAgent ? null : req.session.userId, req.session.userId, machineType, initialStatus, approvalStatus, Notes || '', agentPrice, agentCommission, finalPrice]
   );
 
   if (!result.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
 
-  // Handle agent order with images and per-image quantities
+  if (isAgent && Sheets) {
+    db.run("UPDATE Orders SET Material_Qty = ? WHERE Task_ID = ?", [parseFloat(Sheets) || 0, result.lastId]);
+  }
+
   if (isAgent && Image_IDs && Array.isArray(Image_IDs) && Image_IDs.length > 0) {
     let totalSheets = 0;
     Image_IDs.forEach(imgId => {
@@ -526,15 +544,130 @@ router.get('/pending', requirePermission('orders'), (req, res) => {
   res.json({ orders });
 });
 
-// Helper function for hasPermission (since it's not exported from middleware here)
-// Serve Agent Image File
-router.get('/agent/images/:id/file', requireAuth(), (req, res) => {
-  const img = db.get("SELECT * FROM Agent_Images WHERE Image_ID = ?", [req.params.id]);
-  if (!img) return res.status(404).send('Image not found');
-  if (!fs.existsSync(img.File_Path)) return res.status(404).send('File not found');
-  res.sendFile(img.File_Path);
+// ==================== Product Pricing APIs (Admin) ====================
+// List all product pricing
+router.get('/pricing', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  const pricing = db.all("SELECT * FROM Product_Pricing ORDER BY Category, Product_Name");
+  res.json({ pricing });
 });
 
+// Create product pricing (Admin only)
+router.post('/pricing', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'إضافة الأسعار متاحة للأدمن فقط' });
+  }
+  const { Product_Name, Category, Base_Price, Unit, Description } = req.body;
+  if (!Product_Name || Base_Price === undefined) {
+    return res.status(400).json({ error: 'اسم المنتج والسعر الأساسي مطلوبان' });
+  }
+  const result = db.run(
+    `INSERT INTO Product_Pricing (Product_Name, Category, Base_Price, Unit, Description) VALUES (?, ?, ?, ?, ?)`,
+    [Product_Name, Category || 'عام', parseFloat(Base_Price) || 0, Unit || 'لوح', Description || '']
+  );
+  const pricing = db.get("SELECT * FROM Product_Pricing WHERE Pricing_ID = ?", [result.lastId]);
+  res.json({ success: true, pricing });
+});
+
+// Update product pricing (Admin only)
+router.put('/pricing/:id', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'تعديل الأسعار متاح للأدمن فقط' });
+  }
+  const { Product_Name, Category, Base_Price, Unit, Description, Is_Active } = req.body;
+  db.run(
+    `UPDATE Product_Pricing SET Product_Name=COALESCE(?,Product_Name), Category=COALESCE(?,Category), Base_Price=COALESCE(?,Base_Price), Unit=COALESCE(?,Unit), Description=COALESCE(?,Description), Is_Active=COALESCE(?,Is_Active), Updated_At=CURRENT_TIMESTAMP WHERE Pricing_ID=?`,
+    [Product_Name || null, Category || null, Base_Price !== undefined ? parseFloat(Base_Price) : null, Unit || null, Description || null, Is_Active !== undefined ? (Is_Active ? 1 : 0) : null, req.params.id]
+  );
+  const pricing = db.get("SELECT * FROM Product_Pricing WHERE Pricing_ID = ?", [req.params.id]);
+  res.json({ success: true, pricing });
+});
+
+// Delete product pricing (Admin only)
+router.delete('/pricing/:id', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'حذف الأسعار متاح للأدمن فقط' });
+  }
+  db.run("DELETE FROM Product_Pricing WHERE Pricing_ID = ?", [req.params.id]);
+  res.json({ success: true });
+});
+
+// ==================== Client Pricing APIs (Admin sets per-client prices) ====================
+// Get client pricing for a specific client
+router.get('/client-pricing/:clientId', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  const clientId = req.params.clientId;
+  const pricing = db.all(`
+    SELECT cp.*, pp.Product_Name, pp.Category, pp.Base_Price, pp.Unit, pp.Description
+    FROM Client_Pricing cp
+    JOIN Product_Pricing pp ON cp.Pricing_ID = pp.Pricing_ID
+    WHERE cp.Client_ID = ? AND pp.Is_Active = 1
+    ORDER BY pp.Category, pp.Product_Name
+  `, [clientId]);
+  res.json({ client_pricing: pricing });
+});
+
+// Set/Update client pricing (Admin only)
+router.post('/client-pricing', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'تسعير العملاء متاح للأدمن فقط' });
+  }
+  const { Client_ID, Pricing_ID, Agent_Price, Agent_Commission, Final_Price } = req.body;
+  if (!Client_ID || !Pricing_ID || Agent_Price === undefined) {
+    return res.status(400).json({ error: 'العميل، المنتج، والسعر مطلوبان' });
+  }
+  const agentPrice = parseFloat(Agent_Price) || 0;
+  const agentCommission = parseFloat(Agent_Commission) || 0;
+  const finalPrice = parseFloat(Final_Price) || agentPrice + agentCommission;
+
+  db.run(
+    `INSERT INTO Client_Pricing (Client_ID, Pricing_ID, Agent_Price, Agent_Commission, Final_Price)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(Client_ID, Pricing_ID) DO UPDATE SET
+       Agent_Price=excluded.Agent_Price,
+       Agent_Commission=excluded.Agent_Commission,
+       Final_Price=excluded.Final_Price`,
+    [Client_ID, Pricing_ID, agentPrice, agentCommission, finalPrice]
+  );
+  res.json({ success: true });
+});
+
+// Delete client pricing
+router.delete('/client-pricing/:clientId/:pricingId', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  db.run("DELETE FROM Client_Pricing WHERE Client_ID = ? AND Pricing_ID = ?", [req.params.clientId, req.params.pricingId]);
+  res.json({ success: true });
+});
+
+// ==================== Agent: Get Available Pricing for Order ====================
+router.get('/agent/pricing', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Agent') {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  // Get active product pricing that has client pricing for this agent's clients
+  const clientIds = db.all("SELECT Client_ID FROM Clients WHERE Created_By = ?", [req.session.userId]).map(c => c.Client_ID);
+  if (!clientIds.length) {
+    return res.json({ pricing: [] });
+  }
+  const placeholders = clientIds.map(() => '?').join(',');
+  const pricing = db.all(`
+    SELECT DISTINCT pp.*, cp.Agent_Price, cp.Agent_Commission, cp.Final_Price, c.Full_Name as Client_Name
+    FROM Product_Pricing pp
+    JOIN Client_Pricing cp ON pp.Pricing_ID = cp.Pricing_ID
+    JOIN Clients c ON cp.Client_ID = c.Client_ID
+    WHERE pp.Is_Active = 1 AND cp.Client_ID IN (${placeholders})
+    ORDER BY pp.Category, pp.Product_Name
+  `, clientIds);
+  res.json({ pricing });
+});
+
+// Helper function for hasPermission
 function hasPermission(req, permission) {
   if (!req.session?.userId) return false;
   if (req.session.role === 'Admin') return true;
