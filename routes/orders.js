@@ -92,7 +92,7 @@ router.post('/', requirePermission('orders'), (req, res) => {
   if (!['Admin', 'Designer', 'Custom', 'Agent'].includes(req.session.role)) {
     return res.status(403).json({ error: 'إنشاء الطلبات غير متاح لهذا الدور' });
   }
-  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs } = req.body;
+  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs, Quantities } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
   const machineType = (Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
 
@@ -107,8 +107,18 @@ router.post('/', requirePermission('orders'), (req, res) => {
 
   if (!result.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
 
-  if (isAgent && Sheets) {
-    db.run("UPDATE Orders SET Material_Qty = ? WHERE Task_ID = ?", [parseFloat(Sheets) || 0, result.lastId]);
+  // Handle agent order with images and per-image quantities
+  if (isAgent && Image_IDs && Array.isArray(Image_IDs) && Image_IDs.length > 0) {
+    let totalSheets = 0;
+    Image_IDs.forEach(imgId => {
+      const qty = Quantities && Quantities[imgId] ? parseFloat(Quantities[imgId]) : 0;
+      if (qty > 0) totalSheets += qty;
+      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Uploaded_By) VALUES (?, 'agent_image', 'agent_image', ?, 'agent_image', ?)",
+        [result.lastId, imgId, req.session.userId]);
+    });
+    if (totalSheets > 0) {
+      db.run("UPDATE Orders SET Material_Qty = ? WHERE Task_ID = ?", [totalSheets, result.lastId]);
+    }
   }
 
   if (Materials && Array.isArray(Materials) && Materials.length > 0) {
@@ -119,12 +129,6 @@ router.post('/', requirePermission('orders'), (req, res) => {
     });
   }
 
-  if (isAgent && Image_IDs && Array.isArray(Image_IDs) && Image_IDs.length > 0) {
-    Image_IDs.forEach(imgId => {
-      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Uploaded_By) VALUES (?, 'agent_image', 'agent_image', ?, 'agent_image', ?)",
-        [result.lastId, imgId, req.session.userId]);
-    });
-  }
   if (isAgent && Shapes && Array.isArray(Shapes) && Shapes.length > 0) {
     Shapes.forEach(shapeId => {
       db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Uploaded_By) VALUES (?, 'agent_shape', 'agent_shape', ?, 'agent_shape', ?)",

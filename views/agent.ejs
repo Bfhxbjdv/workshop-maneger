@@ -3,270 +3,396 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>الوكيل - نظام إدارة الورشة</title>
+  <title>إنشاء طلب - الوكيل</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
   <link rel="stylesheet" href="/css/style.css?v=<%= assetVersion %>">
+  <style>
+    .image-card { transition: all 0.2s; cursor: pointer; }
+    .image-card.selected { border: 3px solid #0d6efd; box-shadow: 0 0 0 1px #0d6efd; }
+    .image-card img { height: 180px; object-fit: cover; }
+    .qty-input { width: 80px; }
+    .sticky-footer { position: sticky; bottom: 0; background: white; border-top: 1px solid #dee2e6; padding: 1rem; z-index: 100; }
+  </style>
 </head>
 <body class="agent-page">
   <nav class="navbar navbar-expand-lg navbar-dark bg-success">
     <div class="container-fluid">
-      <a class="navbar-brand" href="/"><i class="bi bi-person-badge"></i> واجهة الوكيل</a>
+      <a class="navbar-brand" href="/"><i class="bi bi-person-badge"></i> وكيل المبيعات</a>
       <span class="navbar-text text-white"><i class="bi bi-person-circle"></i> <%= user.name %></span>
-      <div>
-        <a href="/clients" class="btn btn-outline-light btn-sm"><i class="bi bi-people"></i> العملاء</a>
-        <a href="/designs" class="btn btn-outline-light btn-sm"><i class="bi bi-files"></i> التصاميم</a>
-        <a href="/account" class="btn btn-outline-light btn-sm"><i class="bi bi-person-gear"></i> حسابي</a>
-        <a href="/logout" class="btn btn-outline-light btn-sm">خروج</a>
-      </div>
+      <a href="/logout" class="btn btn-outline-light btn-sm ms-auto">خروج</a>
     </div>
   </nav>
 
-  <div class="container-fluid mt-3">
-    <ul class="nav nav-tabs mb-3" id="agentTabs" role="tablist">
-      <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders" type="button" role="tab">
-          <i class="bi bi-list-task"></i> طلباتي
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" id="create-tab" data-bs-toggle="tab" data-bs-target="#create" type="button" role="tab">
-          <i class="bi bi-plus-circle"></i> طلب جديد
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" id="images-tab" data-bs-toggle="tab" data-bs-target="#images" type="button" role="tab">
-          <i class="bi bi-images"></i> مكتبة الصور
-        </button>
-      </li>
-      <li class="nav-item" role="presentation">
-        <button class="nav-link" id="shapes-tab" data-bs-toggle="tab" data-bs-target="#shapes" type="button" role="tab">
-          <i class="bi bi-shapes"></i> الأشكال
-        </button>
-      </li>
-    </ul>
-
-    <div class="tab-content" id="agentTabContent">
-      <!-- Orders Tab -->
-      <div class="tab-pane fade show active" id="orders" role="tabpanel">
-        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-          <h4 class="mb-0"><i class="bi bi-list-task"></i> طلبات الوكيل</h4>
-          <div class="d-flex gap-2">
-            <select id="agentStatusFilter" class="form-select form-select-sm" style="width:auto" onchange="loadAgentOrders()">
-              <option value="all">كل الحالات</option>
-              <option value="بانتظار الموافقة">بانتظار الموافقة</option>
-              <option value="قيد التصميم">قيد التصميم</option>
-              <option value="جاهز للقص">جاهز للقص</option>
-              <option value="قيد التنفيذ">قيد التنفيذ</option>
-              <option value="تم الانتهاء من القص">تم الانتهاء من القص</option>
-              <option value="تم التسليم">تم التسليم</option>
-              <option value="ملغي">ملغي</option>
-            </select>
-            <input type="text" id="agentOrderSearch" class="form-control form-control-sm" style="width:200px" placeholder="بحث..." oninput="loadAgentOrders()">
+  <div class="container-fluid px-4 py-3">
+    <div class="row g-3">
+      <!-- Left: Order Form -->
+      <div class="col-lg-7">
+        <div class="card h-100">
+          <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-plus-circle"></i> طلب جديد</h5>
           </div>
-        </div>
-        <div class="card">
           <div class="card-body">
-            <div class="table-responsive">
-              <table class="table table-hover table-sm">
-                <thead>
-                  <tr><th>#</th><th>العميل</th><th>الماكينة</th><th>الكمية (لوح)</th><th>الحالة</th><th>الموافقة</th><th>التاريخ</th><th>خيارات</th></tr>
-                </thead>
-                <tbody id="agentOrdersTableBody"></tbody>
-              </table>
-            </div>
-            <nav><ul class="pagination pagination-sm" id="agentOrdersPagination"></ul></nav>
-          </div>
-        </div>
-      </div>
-
-      <!-- Create Order Tab -->
-      <div class="tab-pane fade" id="create" role="tabpanel">
-        <div class="row">
-          <div class="col-md-6">
-            <div class="card mb-3">
-              <div class="card-header bg-primary text-white"><i class="bi bi-plus-circle"></i> طلب جديد</div>
-              <div class="card-body">
-                <form id="agentOrderForm">
-                  <div class="mb-2">
-                    <label class="form-label">العميل <span class="text-danger">*</span></label>
-                    <div class="input-group">
-                      <input type="text" id="agentClientSearch" class="form-control" placeholder="ابحث عن عميل..." autocomplete="off">
-                      <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#agentNewClientModal"><i class="bi bi-plus"></i></button>
-                    </div>
-                    <select id="agentClientSelect" class="form-select mt-1" size="5" style="display:none"></select>
-                    <input type="hidden" id="agentClientId">
+            <form id="agentOrderForm">
+              <div class="row g-2 mb-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">العميل <span class="text-danger">*</span></label>
+                  <div class="input-group">
+                    <input type="text" id="clientSearch" class="form-control" placeholder="اكتب للبحث عن عميل..." autocomplete="off">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#newClientModal"><i class="bi bi-plus"></i></button>
                   </div>
-                  <div class="mb-2">
-                    <label class="form-label">نوع الماكينة <span class="text-danger">*</span></label>
-                    <select id="agentMachineType" class="form-select">
-                      <option value="Laser">ليزر (Laser)</option>
-                      <option value="Router">راوتر (Router)</option>
-                    </select>
-                  </div>
-                  <div class="mb-2">
-                    <label class="form-label">الكمية (باللوح/Sheet) <span class="text-danger">*</span></label>
-                    <input type="number" id="agentSheets" class="form-control" placeholder="عدد الألواح" step="0.1" min="0.1" required>
-                  </div>
-                  <div class="card bg-light mb-2">
-                    <div class="card-header p-2 d-flex justify-content-between">
-                      <small class="fw-bold"><i class="bi bi-boxes"></i> الخامات المستخدمة</small>
-                      <button type="button" class="btn btn-sm btn-success py-0" onclick="addAgentMaterialRow()"><i class="bi bi-plus"></i></button>
-                    </div>
-                    <div class="card-body p-2" id="agentOrderMaterials">
-                      <div class="row g-1 mb-1 material-row">
-                        <div class="col-6">
-                          <select class="form-select form-select-sm mat-select"><option value="">-- اختر --</option></select>
-                        </div>
-                        <div class="col-3">
-                          <input type="number" class="form-control form-control-sm mat-qty" placeholder="كمية" step="0.1" min="0">
-                        </div>
-                        <div class="col-3">
-                          <button type="button" class="btn btn-sm btn-outline-danger py-0" onclick="this.closest('.material-row').remove()"><i class="bi bi-x"></i></button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="mb-2">
-                    <label class="form-label"><i class="bi bi-images"></i> اختر الصور</label>
-                    <div id="agentImageSelector" class="row g-2" style="min-height:100px">
-                      <div class="col-12 text-muted small">جاري تحميل الصور...</div>
-                    </div>
-                    <input type="hidden" id="agentSelectedImages" name="Image_IDs">
-                  </div>
-                  <div class="mb-2">
-                    <label class="form-label"><i class="bi bi-shapes"></i> اختر الأشكال</label>
-                    <div id="agentShapeSelector" class="row g-2" style="min-height:80px">
-                      <div class="col-12 text-muted small">جاري تحميل الأشكال...</div>
-                    </div>
-                    <input type="hidden" id="agentSelectedShapes" name="Shapes">
-                  </div>
-                  <div class="mb-2">
-                    <label class="form-label">ملاحظات</label>
-                    <textarea id="agentOrderNotes" class="form-control" rows="2" placeholder="ملاحظات إضافية..."></textarea>
-                  </div>
-                  <button type="submit" class="btn btn-success w-100"><i class="bi bi-send"></i> إرسال للموافقة</button>
-                </form>
+                  <div id="clientResults" class="list-group mt-1" style="display:none; max-height:200px; overflow:auto;"></div>
+                  <input type="hidden" id="clientId" required>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-bold">نوع الماكينة <span class="text-danger">*</span></label>
+                  <select id="machineType" class="form-select" required>
+                    <option value="Laser">ليزر (Laser)</option>
+                    <option value="Router">راوتر (Router)</option>
+                  </select>
+                </div>
               </div>
-            </div>
-          </div>
-          <div class="col-md-6">
-            <div class="card">
-              <div class="card-header bg-info text-white"><i class="bi bi-info-circle"></i> تعليمات</div>
-              <div class="card-body">
-                <ul class="small">
-                  <li>الكمية تُدخل <strong>باللوح (Sheet)</strong> وليس بالقطعة</li>
-                  <li>اختر الصور والأشكال من المكتبة أدناه</li>
-                  <li>الطلب سيُرسل للمدير والمصممين للموافقة</li>
-                  <li>بعد الموافقة، سيتولى المصمم باقي الخطوات</li>
-                  <li>يمكنك متابعة حالة طلباتك في تبويب "طلباتي"</li>
-                </ul>
+
+              <div class="mb-3">
+                <label class="form-label fw-bold"><i class="bi bi-images"></i> اختر الصور من أعمالنا <span class="text-danger">*</span></label>
+                <div class="form-text">يمكنك اختيار عدة صور لطلب واحد. انقر على الصورة للتحديد/إلغاء التحديد.</div>
+                <div id="imagesGrid" class="row g-2 mt-2" style="max-height:400px; overflow:auto;">
+                  <div class="col-12 text-center text-muted py-4">جاري تحميل الصور...</div>
+                </div>
+                <input type="hidden" id="selectedImages" name="Image_IDs">
+                <div id="selectedCount" class="mt-2 text-primary fw-bold"></div>
               </div>
+
+              <div class="mb-3">
+                <label class="form-label fw-bold"><i class="bi bi-grid-1x2"></i> الكميات (باللوح/Sheet) <span class="text-danger">*</span></label>
+                <div class="form-text">أدخل الكمية لكل صورة محددة (باللوح). سيتم إنشاء بند واحد لكل صورة مع كميتها.</div>
+                <div id="quantitiesContainer" class="row g-2 mt-2"></div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">ملاحظات إضافية</label>
+                <textarea id="orderNotes" class="form-control" rows="2" placeholder="أي ملاحظات للطلب..."></textarea>
+              </div>
+            </form>
+          </div>
+          <div class="card-footer sticky-footer">
+            <div class="d-flex justify-content-between align-items-center">
+              <span class="text-muted small">سيتم إرسال الطلب للموافقة من الإدارة</span>
+              <button type="button" class="btn btn-success btn-lg px-4" id="submitBtn" disabled>
+                <i class="bi bi-send"></i> إرسال للاعتماد
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Images Tab -->
-      <div class="tab-pane fade" id="images" role="tabpanel">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h4 class="mb-0"><i class="bi bi-images"></i> مكتبة الصور</h4>
-          <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#uploadImageModal"><i class="bi bi-upload"></i> رفع صور</button>
+      <!-- Right: Quick Info & Help -->
+      <div class="col-lg-5">
+        <div class="card h-100">
+          <div class="card-header bg-info text-white">
+            <h5 class="mb-0"><i class="bi bi-info-circle"></i> تعليمات سريعة</h5>
+          </div>
+          <div class="card-body">
+            <ol class="small mb-4">
+              <li>ابحث عن العميل أو أضف عميلاً جديداً</li>
+              <li>اختر نوع الماكينة (ليزر/راوتر)</li>
+              <li>انقر على الصور التي تريدها من أعمالنا (يمكن اختيار عدة صور)</li>
+              <li>أدخل الكمية <strong>باللوح (Sheet)</strong> لكل صورة</li>
+              <li>اضغط <strong>"إرسال للاعتماد"</strong></li>
+            </ol>
+            <hr>
+            <h6 class="text-success"><i class="bi bi-check-circle"></i> ما سيحدث بعد الإرسال:</h6>
+            <ul class="small text-muted mb-0">
+              <li>الطلب يذهب للإدارة/المصممين للموافقة</li>
+              <li>بعد الموافقة، يتولى المصمم باقي الخطوات</li>
+              <li>ستصلك إشعارات بحالة الطلب</li>
+            </ul>
+          </div>
         </div>
-        <div class="mb-2">
-          <select id="imageCategoryFilter" class="form-select form-select-sm w-auto d-inline-block" onchange="loadAgentImages()">
-            <option value="">كل التصنيفات</option>
-            <option value="عام">عام</option>
-            <option value="تصاميم">تصاميم</option>
-            <option value="خامات">خامات</option>
-            <option value="أخرى">أخرى</option>
-          </select>
-        </div>
-        <div class="row g-2" id="agentImagesGrid"></div>
-      </div>
 
-      <!-- Shapes Tab -->
-      <div class="tab-pane fade" id="shapes" role="tabpanel">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-          <h4 class="mb-0"><i class="bi bi-shapes"></i> الأشكال</h4>
-          <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addShapeModal"><i class="bi bi-plus"></i> إضافة شكل</button>
-        </div>
-        <div class="row g-2" id="agentShapesGrid"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Upload Image Modal -->
-  <div class="modal fade" id="uploadImageModal">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header bg-success text-white"><h5><i class="bi bi-upload"></i> رفع صور</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-        <div class="modal-body">
-          <form id="uploadImageForm" enctype="multipart/form-data">
-            <div class="mb-2">
-              <label class="form-label">التصنيف</label>
-              <select id="uploadImageCategory" class="form-select">
-                <option value="عام">عام</option>
-                <option value="تصاميم">تصاميم</option>
-                <option value="خامات">خامات</option>
-                <option value="أخرى">أخرى</option>
-              </select>
+        <div class="card mt-3">
+          <div class="card-header bg-secondary text-white">
+            <h5 class="mb-0"><i class="bi bi-clock-history"></i> آخر طلباتك</h5>
+          </div>
+          <div class="card-body" style="max-height:300px; overflow:auto;">
+            <div id="myRecentOrders" class="list-group list-group-flush">
+              <div class="text-center text-muted py-3">جاري التحميل...</div>
             </div>
-            <div class="mb-2">
-              <label class="form-label">الصور (يمكن اختيار عدة ملفات)</label>
-              <input type="file" id="uploadImageFiles" class="form-control" accept="image/*" multiple required>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-          <button class="btn btn-success" onclick="uploadAgentImages()"><i class="bi bi-cloud-upload"></i> رفع</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Add Shape Modal -->
-  <div class="modal fade" id="addShapeModal">
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header bg-primary text-white"><h5><i class="bi bi-plus"></i> إضافة شكل جديد</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-        <div class="modal-body">
-          <form id="addShapeForm">
-            <div class="mb-2"><label class="form-label">اسم الشكل</label><input type="text" id="shapeName" class="form-control" required></div>
-            <div class="mb-2"><label class="form-label">الوصف</label><textarea id="shapeDescription" class="form-control" rows="2"></textarea></div>
-            <div class="mb-2"><label class="form-label">صورة الشكل (اختياري)</label><select id="shapeImageSelect" class="form-select"><option value="">-- بدون صورة --</option></select></div>
-          </form>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-          <button class="btn btn-primary" onclick="saveShape()"><i class="bi bi-save"></i> حفظ</button>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
   <!-- New Client Modal -->
-  <div class="modal fade" id="agentNewClientModal">
+  <div class="modal fade" id="newClientModal">
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header"><h5>عميل جديد</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
         <div class="modal-body">
-          <div class="mb-2"><label class="form-label">الاسم</label><input type="text" id="agentNewClientName" class="form-control"></div>
-          <div class="mb-2"><label class="form-label">رقم الهاتف</label><input type="text" id="agentNewClientPhone" class="form-control"></div>
-          <div class="mb-2"><label class="form-label">ملاحظات</label><textarea id="agentNewClientNotes" class="form-control" rows="2"></textarea></div>
+          <div class="mb-2"><label class="form-label">الاسم <span class="text-danger">*</span></label><input type="text" id="newClientName" class="form-control" required></div>
+          <div class="mb-2"><label class="form-label">رقم الهاتف</label><input type="text" id="newClientPhone" class="form-control"></div>
+          <div class="mb-2"><label class="form-label">ملاحظات</label><textarea id="newClientNotes" class="form-control" rows="2"></textarea></div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-primary" onclick="agentAddClient()">حفظ</button>
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-primary" onclick="addNewClient()">حفظ واختيار</button>
         </div>
       </div>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/main.js"></script>
-  <script src="/js/agent.js?v=<%= assetVersion %>"></script>
+  <script>
+    // Agent Order Page Logic
+    let selectedImageIds = [];
+    let allImages = [];
+    let allClients = [];
+    let clientsLoaded = false;
+
+    // Load images
+    async function loadImages() {
+      try {
+        const res = await fetch('/api/orders/agent/images', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const data = await res.json();
+        allImages = data.images || [];
+        renderImages();
+      } catch (e) { console.error('loadImages:', e); }
+    }
+
+    function renderImages() {
+      const grid = document.getElementById('imagesGrid');
+      if (!allImages.length) {
+        grid.innerHTML = '<div class="col-12 text-center text-muted py-4">لا توجد صور مرفوعة. تواصل مع الإدارة لرفع صور الأعمال.</div>';
+        return;
+      }
+      grid.innerHTML = '';
+      allImages.forEach(img => {
+        const isSelected = selectedImageIds.includes(img.Image_ID);
+        const col = document.createElement('div');
+        col.className = 'col-6 col-md-4 col-lg-3';
+        col.innerHTML = `
+          <div class="card h-100 image-card ${isSelected ? 'selected' : ''}" onclick="toggleImage(${img.Image_ID}, this)">
+            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${img.Original_Name}" class="card-img-top" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+            <div class="d-flex align-items-center justify-content-center bg-light" style="height:180px; display:none;">
+              <i class="bi bi-image text-muted" style="font-size:3rem"></i>
+            </div>
+            <div class="card-body p-2">
+              <small class="text-truncate d-block fw-bold">${img.Original_Name}</small>
+              <span class="badge bg-secondary">${img.Category}</span>
+            </div>
+            ${isSelected ? '<div class="position-absolute top-0 end-0 m-2 badge bg-primary rounded-pill"><i class="bi bi-check-lg"></i></div>' : ''}
+          </div>
+        `;
+        grid.appendChild(col);
+      });
+      updateQuantitiesUI();
+    }
+
+    function toggleImage(id, card) {
+      if (selectedImageIds.includes(id)) {
+        selectedImageIds = selectedImageIds.filter(x => x !== id);
+        card.classList.remove('selected');
+        const badge = card.querySelector('.badge');
+        if (badge) badge.remove();
+      } else {
+        selectedImageIds.push(id);
+        card.classList.add('selected');
+        const badge = document.createElement('div');
+        badge.className = 'position-absolute top-0 end-0 m-2 badge bg-primary rounded-pill';
+        badge.innerHTML = '<i class="bi bi-check-lg"></i>';
+        card.appendChild(badge);
+      }
+      document.getElementById('selectedImages').value = selectedImageIds.join(',');
+      updateQuantitiesUI();
+      updateSubmitButton();
+    }
+
+    function updateQuantitiesUI() {
+      const container = document.getElementById('quantitiesContainer');
+      const countDiv = document.getElementById('selectedCount');
+      if (!selectedImageIds.length) {
+        container.innerHTML = '<div class="col-12 text-muted text-center py-3">اختر صوراً أولاً لتحديد الكميات</div>';
+        countDiv.textContent = '';
+        return;
+      }
+      countDiv.textContent = `تم اختيار ${selectedImageIds.length} صورة — حدد الكمية لكل منها:`;
+      container.innerHTML = '';
+      selectedImageIds.forEach(id => {
+        const img = allImages.find(i => i.Image_ID === id);
+        if (!img) return;
+        const col = document.createElement('div');
+        col.className = 'col-12 col-md-6';
+        col.innerHTML = `
+          <div class="card border-secondary">
+            <div class="card-body p-2 d-flex align-items-center gap-2">
+              <img src="/api/orders/agent/images/${id}/file" style="width:50px;height:50px;object-fit:cover;border-radius:4px" onerror="this.style.display='none'">
+              <div class="flex-grow-1">
+                <small class="fw-bold">${img.Original_Name}</small>
+                <small class="text-muted d-block">${img.Category}</small>
+              </div>
+              <input type="number" class="form-control form-control-sm qty-input" data-image-id="${id}" placeholder="لوح" step="0.1" min="0.1" required>
+            </div>
+          </div>
+        `;
+        container.appendChild(col);
+      });
+    }
+
+    function updateSubmitButton() {
+      const btn = document.getElementById('submitBtn');
+      const hasClient = document.getElementById('clientId').value;
+      const hasImages = selectedImageIds.length > 0;
+      const hasQtys = Array.from(document.querySelectorAll('.qty-input')).every(i => i.value && parseFloat(i.value) > 0);
+      btn.disabled = !(hasClient && hasImages && hasQtys);
+    }
+
+    // Client search
+    async function searchClients() {
+      const q = document.getElementById('clientSearch').value.trim();
+      const results = document.getElementById('clientResults');
+      if (q.length < 2) { results.style.display = 'none'; return; }
+      try {
+        const res = await fetch('/api/clients?search=' + encodeURIComponent(q), { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const data = await res.json();
+        const clients = data.clients || data;
+        results.innerHTML = '';
+        if (!clients.length) {
+          results.innerHTML = '<div class="list-group-item text-muted">لا يوجد نتائج</div>';
+        } else {
+          clients.forEach(c => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action';
+            item.textContent = c.Full_Name + (c.Phone_Number ? ' - ' + c.Phone_Number : '');
+            item.onclick = () => selectClient(c.Client_ID, c.Full_Name);
+            results.appendChild(item);
+          });
+        }
+        results.style.display = 'block';
+      } catch (e) { console.error(e); }
+    }
+
+    function selectClient(id, name) {
+      document.getElementById('clientId').value = id;
+      document.getElementById('clientSearch').value = name;
+      document.getElementById('clientResults').style.display = 'none';
+      updateSubmitButton();
+    }
+
+    function addNewClient() {
+      const name = document.getElementById('newClientName').value.trim();
+      const phone = document.getElementById('newClientPhone').value.trim();
+      const notes = document.getElementById('newClientNotes').value.trim();
+      if (!name) return alert('الاسم مطلوب');
+      fetch('/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ Full_Name: name, Phone_Number: phone, Notes: notes })
+      }).then(r => r.json()).then(data => {
+        if (data.Client_ID) {
+          selectClient(data.Client_ID, name);
+          bootstrap.Modal.getInstance(document.getElementById('newClientModal')).hide();
+          document.getElementById('newClientName').value = '';
+          document.getElementById('newClientPhone').value = '';
+          document.getElementById('newClientNotes').value = '';
+        } else alert(data.error || 'فشل الإضافة');
+      }).catch(e => { console.error(e); alert('خطأ'); });
+    }
+
+    // Load recent orders
+    async function loadMyOrders() {
+      try {
+        const res = await fetch('/api/orders?limit=10&sort=newest', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const data = await res.json();
+        const orders = (data.orders || data).filter(o => o.Created_By === '<%= user.id || user.User_ID %>') || [];
+        const container = document.getElementById('myRecentOrders');
+        if (!orders.length) {
+          container.innerHTML = '<div class="text-center text-muted py-3">لا توجد طلبات سابقة</div>';
+          return;
+        }
+        container.innerHTML = '';
+        orders.forEach(o => {
+          const badge = o.Status === 'بانتظار الموافقة' ? 'bg-warning text-dark'
+            : o.Approval_Status === 'rejected' ? 'bg-danger'
+            : o.Status === 'تم التسليم' ? 'bg-success' : 'bg-primary';
+          const item = document.createElement('div');
+          item.className = 'list-group-item d-flex justify-content-between align-items-center';
+          item.innerHTML = `
+            <div>
+              <div class="fw-bold">#${o.Task_ID} - ${o.Client_Name || 'عميل'}</div>
+              <small class="text-muted">${o.Machine_Type} · ${o.Material_Qty || 0} لوح</small>
+            </div>
+            <span class="badge ${badge}">${o.Status}</span>
+          `;
+          container.appendChild(item);
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    // Form submit
+    document.getElementById('agentOrderForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const clientId = document.getElementById('clientId').value;
+      const machineType = document.getElementById('machineType').value;
+      const notes = document.getElementById('orderNotes').value;
+      const qtys = {};
+      document.querySelectorAll('.qty-input').forEach(i => { qtys[i.dataset.imageId] = parseFloat(i.value); });
+
+      const payload = {
+        Client_ID: parseInt(clientId),
+        Machine_Type: machineType,
+        Notes: notes,
+        Image_IDs: selectedImageIds,
+        Quantities: qtys
+      };
+
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('submitBtn').innerHTML = '<span class="spinner-border spinner-border-sm"></span> جاري الإرسال...';
+
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.Task_ID) {
+          alert('✅ تم إرسال الطلب للاعتماد بنجاح!\nرقم الطلب: #' + data.Task_ID);
+          document.getElementById('agentOrderForm').reset();
+          selectedImageIds = [];
+          document.getElementById('selectedImages').value = '';
+          document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected'));
+          document.querySelectorAll('.image-card .badge').forEach(b => b.remove());
+          renderImages();
+          loadMyOrders();
+        } else {
+          alert(data.error || 'فشل الإرسال');
+        }
+      } catch (e) { console.error(e); alert('خطأ في الاتصال'); }
+      finally {
+        document.getElementById('submitBtn').disabled = false;
+        document.getElementById('submitBtn').innerHTML = '<i class="bi bi-send"></i> إرسال للاعتماد';
+        updateSubmitButton();
+      }
+    });
+
+    // Event listeners
+    document.getElementById('clientSearch').addEventListener('input', () => {
+      clearTimeout(window.clientSearchTimer);
+      window.clientSearchTimer = setTimeout(searchClients, 300);
+    });
+    document.addEventListener('click', e => {
+      if (!e.target.closest('#clientSearch') && !e.target.closest('#clientResults')) {
+        document.getElementById('clientResults').style.display = 'none';
+      }
+    });
+    document.querySelectorAll('.qty-input').forEach(i => i.addEventListener('input', updateSubmitButton));
+
+    // Init
+    loadImages();
+    loadMyOrders();
+  </script>
   <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
 </body>
 </html>
