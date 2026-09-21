@@ -669,8 +669,32 @@ router.get('/agent/pricing', requirePermission('orders'), (req, res) => {
 
 module.exports = router;
 
-// Helper function for hasPermission
-function hasPermission(req, permission) {
+// Debug: Run migration manually
+router.post('/debug/migrate', requireAuth(), (req, res) => {
+  if (req.session.role !== 'Admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const results = [];
+    const migrations = [
+      { sql: "ALTER TABLE Orders ADD COLUMN Created_By INTEGER", name: 'Created_By' },
+      { sql: "ALTER TABLE Orders ADD COLUMN Approval_Status TEXT DEFAULT 'approved' CHECK(Approval_Status IN ('pending','approved','rejected'))", name: 'Approval_Status' },
+      { sql: "ALTER TABLE Orders ADD COLUMN Agent_Price REAL DEFAULT 0", name: 'Agent_Price' },
+      { sql: "ALTER TABLE Orders ADD COLUMN Agent_Commission REAL DEFAULT 0", name: 'Agent_Commission' },
+      { sql: "ALTER TABLE Orders ADD COLUMN Final_Price REAL DEFAULT 0", name: 'Final_Price' },
+      { sql: "ALTER TABLE Orders ADD COLUMN Agent_Approved_At DATETIME", name: 'Agent_Approved_At' },
+      { sql: "ALTER TABLE Orders ADD COLUMN Agent_Approved_By INTEGER REFERENCES Users(User_ID)", name: 'Agent_Approved_By' },
+      { sql: "ALTER TABLE Agent_Images ADD COLUMN Design_ID INTEGER REFERENCES Designs(Design_ID)", name: 'Design_ID' },
+      { sql: "ALTER TABLE Order_Files ADD COLUMN Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library'))", name: 'Upload_Type' },
+    ];
+    for (const m of migrations) {
+      try { db.exec(m.sql); results.push(m.name); } catch {}
+    }
+    res.json({ success: true, added: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+module.exports = router;
   if (!req.session?.userId) return false;
   if (req.session.role === 'Admin') return true;
   if (req.session.role === 'Custom') {
