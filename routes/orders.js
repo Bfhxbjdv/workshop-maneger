@@ -131,8 +131,12 @@ router.post('/', requirePermission('orders'), (req, res) => {
     Image_IDs.forEach(imgId => {
       const qty = Quantities && Quantities[imgId] ? parseFloat(Quantities[imgId]) : 0;
       if (qty > 0) totalSheets += qty;
-      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Uploaded_By) VALUES (?, 'agent_image', 'agent_image', ?, 'agent_image', ?)",
-        [result.lastId, imgId, req.session.userId]);
+      // Get the actual file path from Agent_Images table
+      const image = db.get("SELECT File_Path, Original_Name FROM Agent_Images WHERE Image_ID = ?", [imgId]);
+      if (image) {
+        db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Upload_Type, Uploaded_By) VALUES (?, ?, ?, ?, 'image', 'agent_image', ?)",
+          [result.lastId, image.Original_Name, image.Stored_Name || image.Original_Name, image.File_Path, req.session.userId]);
+      }
     });
     if (totalSheets > 0) {
       db.run("UPDATE Orders SET Material_Qty = ? WHERE Task_ID = ?", [totalSheets, result.lastId]);
@@ -149,8 +153,11 @@ router.post('/', requirePermission('orders'), (req, res) => {
 
   if (isAgent && Shapes && Array.isArray(Shapes) && Shapes.length > 0) {
     Shapes.forEach(shapeId => {
-      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Uploaded_By) VALUES (?, 'agent_shape', 'agent_shape', ?, 'agent_shape', ?)",
-        [result.lastId, shapeId, req.session.userId]);
+      const shape = db.get("SELECT File_Path, Original_Name, Stored_Name FROM Agent_Images WHERE Image_ID = ?", [shapeId]);
+      if (shape) {
+        db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Upload_Type, Uploaded_By) VALUES (?, ?, ?, ?, 'image', 'agent_shape', ?)",
+          [result.lastId, shape.Original_Name, shape.Stored_Name || shape.Original_Name, shape.File_Path, req.session.userId]);
+      }
     });
   }
 
@@ -683,7 +690,10 @@ router.post('/debug/migrate', requireAuth(), (req, res) => {
       { sql: "ALTER TABLE Orders ADD COLUMN Agent_Approved_At DATETIME", name: 'Agent_Approved_At' },
       { sql: "ALTER TABLE Orders ADD COLUMN Agent_Approved_By INTEGER REFERENCES Users(User_ID)", name: 'Agent_Approved_By' },
       { sql: "ALTER TABLE Agent_Images ADD COLUMN Design_ID INTEGER REFERENCES Designs(Design_ID)", name: 'Design_ID' },
-      { sql: "ALTER TABLE Order_Files ADD COLUMN Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library'))", name: 'Upload_Type' },
+      { sql: "ALTER TABLE Order_Files ADD COLUMN Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library', 'agent_image', 'agent_shape'))", name: 'Upload_Type' },
+      { sql: "ALTER TABLE Agent_Custom_Designs ADD COLUMN Designer_ID INTEGER REFERENCES Users(User_ID)", name: 'Designer_ID' },
+      { sql: "ALTER TABLE Agent_Custom_Designs ADD COLUMN Updated_At DATETIME", name: 'Updated_At' },
+      { sql: "ALTER TABLE Agent_Custom_Designs ADD COLUMN Notes TEXT", name: 'Notes' },
     ];
     for (const m of migrations) {
       try { db.exec(m.sql); results.push(m.name); } catch {}
@@ -695,17 +705,3 @@ router.post('/debug/migrate', requireAuth(), (req, res) => {
 });
 
 module.exports = router;
-  if (!req.session?.userId) return false;
-  if (req.session.role === 'Admin') return true;
-  if (req.session.role === 'Custom') {
-    const user = db.get("SELECT Permissions FROM Users WHERE User_ID=?", [req.session.userId]);
-    try { return !!JSON.parse(user?.Permissions || '{}')[permission]; } catch { return false; }
-  }
-  const standardRoles = {
-    Designer: ['orders', 'clients', 'inventory', 'invoices'],
-    Laser_Op: ['orders'],
-    Router_Op: ['orders'],
-    Agent: ['orders', 'clients']
-  };
-  return (standardRoles[req.session.role] || []).includes(permission);
-}

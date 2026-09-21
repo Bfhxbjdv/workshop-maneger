@@ -110,7 +110,7 @@ async function initDatabase() {
       File_Size REAL DEFAULT 0,
       Label TEXT DEFAULT '',
       File_Type TEXT DEFAULT 'design',
-      Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library')),
+      Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library', 'agent_image', 'agent_shape')),
       Uploaded_By INTEGER,
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (Task_ID) REFERENCES Orders(Task_ID) ON DELETE CASCADE,
@@ -307,7 +307,10 @@ async function initDatabase() {
       Image_Path TEXT,
       Thumbnail_Path TEXT,
       Status TEXT DEFAULT 'pending' CHECK(Status IN ('pending','in_progress','completed','cancelled')),
-      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP
+      Designer_ID INTEGER REFERENCES Users(User_ID),
+      Notes TEXT,
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
+      Updated_At DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
@@ -416,10 +419,27 @@ async function initDatabase() {
   } catch (e) {}
 
   try {
+    db.exec("ALTER TABLE Agent_Custom_Designs ADD COLUMN Designer_ID INTEGER REFERENCES Users(User_ID)");
+    console.log('✅ Added Designer_ID column to Agent_Custom_Designs');
+  } catch (e) {}
+
+  try {
+    // NOTE: sql.js rejects non-constant defaults in ALTER TABLE, so no DEFAULT here
+    // (the UPDATE query sets Updated_At = CURRENT_TIMESTAMP explicitly).
+    db.exec("ALTER TABLE Agent_Custom_Designs ADD COLUMN Updated_At DATETIME");
+    console.log('✅ Added Updated_At column to Agent_Custom_Designs');
+  } catch (e) {}
+
+  try {
+    db.exec("ALTER TABLE Agent_Custom_Designs ADD COLUMN Notes TEXT");
+    console.log('✅ Added Notes column to Agent_Custom_Designs');
+  } catch (e) {}
+
+  try {
     const fileCols = db.query("PRAGMA table_info(Order_Files)");
     if (!fileCols.some(c => c.name === 'Label')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Label TEXT DEFAULT ''"); console.log('✅ Added Label column'); }
     if (!fileCols.some(c => c.name === 'File_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN File_Type TEXT DEFAULT 'design'"); console.log('✅ Added File_Type column'); }
-    if (!fileCols.some(c => c.name === 'Upload_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library'))"); console.log('✅ Added Upload_Type column'); }
+    if (!fileCols.some(c => c.name === 'Upload_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library', 'agent_image', 'agent_shape'))"); console.log('✅ Added Upload_Type column'); }
   } catch (e) {}
 
   try {

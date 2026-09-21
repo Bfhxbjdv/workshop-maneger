@@ -2,7 +2,23 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database/connection');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { requireAuth, requirePermission, hasPermission } = require('../middleware/auth');
+
+// Multer config for custom design uploads
+const CUSTOM_DESIGN_DIR = path.join(__dirname, '..', 'Server_Storage', 'Custom_Designs');
+if (!fs.existsSync(CUSTOM_DESIGN_DIR)) fs.mkdirSync(CUSTOM_DESIGN_DIR, { recursive: true });
+
+const customDesignStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, CUSTOM_DESIGN_DIR),
+  filename: (req, file, cb) => {
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, unique + path.extname(file.originalname));
+  }
+});
+const customDesignUpload = multer({ storage: customDesignStorage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ==================== Helper Functions ====================
 
@@ -1059,26 +1075,62 @@ router.get('/admin/agent-custom-orders', requireAuth(['Admin']), (req, res) => {
 // ==================== Agent: Custom Design Request ====================
 
 // Agent: Submit custom design request
-router.post('/my/custom-design', requireAuth(['Agent']), (req, res) => {
+// Multer errors must return JSON (not the default HTML error page)
+function customDesignUploadMw(req, res, next) {
+  customDesignUpload.array('customDesignFiles', 10)(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'حجم الملف يتجاوز الحد المسموح (10MB)'
+        : err.code === 'LIMIT_FILE_COUNT'
+          ? 'عدد الملفات يتجاوز الحد المسموح (10)'
+          : 'فشل رفع الملفات: ' + (err.message || 'خطأ غير معروف');
+      return res.status(400).json({ error: msg });
+    }
+    next();
+  });
+}
+router.post('/my/custom-design', requireAuth(['Agent']), customDesignUploadMw, (req, res) => {
   try {
-    const { order_id, name, description, image_path, thumbnail_path } = req.body;
+    const name = String(req.body?.name || '').trim();
+    const description = String(req.body?.description || '').trim();
+    let orderIdRaw = req.body?.order_id;
+    if (orderIdRaw === undefined || orderIdRaw === null) orderIdRaw = '';
+    orderIdRaw = String(orderIdRaw).trim();
+    const orderId = (orderIdRaw === '' || orderIdRaw.toLowerCase() === 'null' || orderIdRaw.toLowerCase() === 'undefined')
+      ? null
+      : parseInt(orderIdRaw, 10);
     if (!name) return res.status(400).json({ error: 'اسم التصميم مطلوب' });
-    
+    if (orderId !== null && (!Number.isInteger(orderId) || orderId <= 0)) {
+      return res.status(400).json({ error: 'رقم الطلب المرتبط غير صالح' });
+    }
+    if (orderId !== null) {
+      const ownOrder = db.get(
+        "SELECT Task_ID FROM Orders WHERE Task_ID = ? AND Created_By = ?",
+        [orderId, req.session.userId]
+      );
+      if (!ownOrder) return res.status(403).json({ error: 'لا تملك الصلاحية لربط هذا الطلب' });
+    }
+
+    // Save every uploaded file; keep all paths as JSON so no attachment is lost
+    const filePaths = Array.isArray(req.files) ? req.files.map(f => f.path) : [];
+    const imagePath = filePaths.length > 1 ? JSON.stringify(filePaths) : (filePaths[0] || null);
+    const thumbnailPath = filePaths[0] || null;
+
     const result = db.run(
       `INSERT INTO Agent_Custom_Designs (Agent_ID, Order_ID, Name, Description, Image_Path, Thumbnail_Path)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [req.session.userId, order_id || null, name, description || '', image_path || null, thumbnail_path || null]
+      [req.session.userId, orderId, name, description, imagePath, thumbnailPath]
     );
-    
-    // Notify admins and designers
+
+    // Notify admins and designers (Task_ID must be NULL when unlinked to satisfy FK)
     const admins = db.all("SELECT User_ID FROM Users WHERE Role IN ('Admin', 'Designer', 'Custom')");
     admins.forEach(u => {
       db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
-        [order_id || 0, `طلب تصميم مخصص جديد من الوكيل: ${req.session.name}`, 'info']);
+        [orderId, `طلب تصميم مخصص جديد من الوكيل: ${req.session.name}`, 'info']);
     });
-    
-    logActivity(req.session.userId, 'custom_design_requested', 'custom_design', result.lastId, { name }, req);
-    res.json({ success: true, custom_design_id: result.lastId });
+
+    logActivity(req.session.userId, 'custom_design_requested', 'custom_design', result.lastId, { name, files: filePaths.length }, req);
+    res.json({ success: true, custom_design_id: result.lastId, files: filePaths.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
