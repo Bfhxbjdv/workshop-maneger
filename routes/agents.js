@@ -769,4 +769,351 @@ router.delete('/:id', requireAuth(['Admin']), (req, res) => {
   }
 });
 
+// ==================== Admin: Image Library Management ====================
+
+// List all agent images (library)
+router.get('/admin/images', requireAuth(['Admin']), (req, res) => {
+  try {
+    const category = req.query.category || '';
+    let where = 'WHERE 1=1';
+    let params = [];
+    
+    if (category) {
+      where += ' AND ai.Category = ?';
+      params.push(category);
+    }
+    
+    const images = db.all(`
+      SELECT ai.*, d.Name as Design_Name, u.Name as Uploader_Name
+      FROM Agent_Images ai
+      LEFT JOIN Designs d ON ai.Design_ID = d.Design_ID
+      LEFT JOIN Users u ON ai.Uploaded_By = u.User_ID
+      ${where}
+      ORDER BY ai.Created_At DESC
+    `, params);
+    
+    res.json({ images });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Upload image to library
+router.post('/admin/images', requireAuth(['Admin']), (req, res) => {
+  // This will be handled by multer middleware in the actual route
+  // The actual upload is handled in orders.js with agentUpload middleware
+  res.json({ success: true, message: 'Use /api/orders/agent/images for upload' });
+});
+
+// Delete image from library
+router.delete('/admin/images/:id', requireAuth(['Admin']), (req, res) => {
+  try {
+    const image = db.get("SELECT * FROM Agent_Images WHERE Image_ID = ?", [req.params.id]);
+    if (!image) return res.status(404).json({ error: 'الصورة غير موجودة' });
+    
+    // Delete physical file
+    const fs = require('fs');
+    if (fs.existsSync(image.File_Path)) {
+      fs.unlinkSync(image.File_Path);
+    }
+    
+    db.run("DELETE FROM Agent_Images WHERE Image_ID = ?", [req.params.id]);
+    logActivity(0, 'image_deleted', 'image', req.params.id, { image: image.Original_Name }, req);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Link/Unlink image to design
+router.put('/admin/images/:id/link-design', requireAuth(['Admin']), (req, res) => {
+  try {
+    const { design_id } = req.body;
+    const image = db.get("SELECT * FROM Agent_Images WHERE Image_ID = ?", [req.params.id]);
+    if (!image) return res.status(404).json({ error: 'الصورة غير موجودة' });
+    
+    if (design_id) {
+      const design = db.get("SELECT * FROM Designs WHERE Design_ID = ?", [design_id]);
+      if (!design) return res.status(404).json({ error: 'التصميم غير موجود' });
+      db.run("UPDATE Agent_Images SET Design_ID = ? WHERE Image_ID = ?", [design_id, req.params.id]);
+      logActivity(0, 'image_linked_design', 'image', req.params.id, { design_id }, req);
+    } else {
+      db.run("UPDATE Agent_Images SET Design_ID = NULL WHERE Image_ID = ?", [req.params.id]);
+      logActivity(0, 'image_unlinked_design', 'image', req.params.id, {}, req);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== Admin: Designs Management ====================
+
+// List all designs with stats
+router.get('/admin/designs', requireAuth(['Admin']), (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || '';
+    const status = req.query.status || '';
+    
+    let where = 'WHERE 1=1';
+    let params = [];
+    
+    if (search) {
+      where += ' AND (d.Name LIKE ? OR d.Category LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    if (status) {
+      where += ' AND d.Status = ?';
+      params.push(status);
+    }
+    
+    const countRow = db.get(`SELECT COUNT(*) as total FROM Designs d ${where}`, params);
+    const designs = db.all(`
+      SELECT d.*, u.Name as Creator_Name,
+             (SELECT COUNT(*) FROM Agent_Images WHERE Design_ID = d.Design_ID) as Image_Count
+      FROM Designs d
+      LEFT JOIN Users u ON d.CreatedBy = u.User_ID
+      ${where}
+      ORDER BY d.CreatedAt DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    
+    res.json({ designs, total: countRow.total, page, pages: Math.ceil(countRow.total / limit) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Create design
+router.post('/admin/designs', requireAuth(['Admin']), (req, res) => {
+  try {
+    const { Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password } = req.body;
+    if (!Name || !FilePath) return res.status(400).json({ error: 'اسم التصميم وملف التصميم مطلوبان' });
+    
+    const result = db.run(
+      `INSERT INTO Designs (Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password, CreatedBy)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [Name, Category || '', Material || '', Thickness || '', parseFloat(Width) || 0, parseFloat(Height) || 0, Unit || 'سم', Notes || '', FilePath, Original_Name || '', ThumbnailPath || null, Password || null, req.session.userId]
+    );
+    
+    const design = db.get("SELECT * FROM Designs WHERE Design_ID = ?", [result.lastId]);
+    res.json({ success: true, design });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Update design
+router.put('/admin/designs/:id', requireAuth(['Admin']), (req, res) => {
+  try {
+    const { Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password, Status } = req.body;
+    
+    db.run(
+      `UPDATE Designs SET 
+        Name = COALESCE(?, Name),
+        Category = COALESCE(?, Category),
+        Material = COALESCE(?, Material),
+        Thickness = COALESCE(?, Thickness),
+        Width = COALESCE(?, Width),
+        Height = COALESCE(?, Height),
+        Unit = COALESCE(?, Unit),
+        Notes = COALESCE(?, Notes),
+        FilePath = COALESCE(?, FilePath),
+        Original_Name = COALESCE(?, Original_Name),
+        ThumbnailPath = COALESCE(?, ThumbnailPath),
+        Password = COALESCE(?, Password)
+       WHERE Design_ID = ?`,
+      [Name || null, Category || null, Material || null, Thickness || null, 
+       Width || null, Height || null, Unit || null, Notes || null, 
+       FilePath || null, Original_Name || null, ThumbnailPath || null, Password || null, req.params.id]
+    );
+    
+    const design = db.get("SELECT * FROM Designs WHERE Design_ID = ?", [req.params.id]);
+    res.json({ success: true, design });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Delete design
+router.delete('/admin/designs/:id', requireAuth(['Admin']), (req, res) => {
+  try {
+    const design = db.get("SELECT * FROM Designs WHERE Design_ID = ?", [req.params.id]);
+    if (!design) return res.status(404).json({ error: 'التصميم غير موجود' });
+    
+    // Unlink images first
+    db.run("UPDATE Agent_Images SET Design_ID = NULL WHERE Design_ID = ?", [req.params.id]);
+    
+    // Delete design
+    db.run("DELETE FROM Designs WHERE Design_ID = ?", [req.params.id]);
+    
+    logActivity(0, 'design_deleted', 'design', req.params.id, { name: design.Name }, req);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== Admin: Custom Design Requests ====================
+
+// List custom design requests
+router.get('/admin/custom-requests', requireAuth(['Admin']), (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+    const status = req.query.status || '';
+    const search = req.query.search || '';
+    
+    let where = 'WHERE 1=1';
+    let params = [];
+    
+    if (status) {
+      where += ' AND c.Status = ?';
+      params.push(status);
+    }
+    if (search) {
+      where += ' AND (c.Name LIKE ? OR u.Name LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    
+    const countRow = db.get(`SELECT COUNT(*) as total FROM Agent_Custom_Designs c JOIN Users u ON c.Agent_ID = u.User_ID ${where}`, params);
+    const requests = db.all(`
+      SELECT c.*, u.Name as Agent_Name, u.Username as Agent_Username,
+             o.Task_ID as Order_ID, c2.Full_Name as Client_Name
+      FROM Agent_Custom_Designs c
+      JOIN Users u ON c.Agent_ID = u.User_ID
+      LEFT JOIN Orders o ON c.Order_ID = o.Task_ID
+      LEFT JOIN Clients c2 ON o.Client_ID = c2.Client_ID
+      ${where}
+      ORDER BY c.Created_At DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    
+    res.json({ requests, total: countRow.total, page, pages: Math.ceil(countRow.total / limit) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Update custom design request status
+router.put('/admin/custom-requests/:id/status', requireAuth(['Admin']), (req, res) => {
+  try {
+    const { status, designer_id, notes } = req.body;
+    const validStatuses = ['pending', 'in_progress', 'completed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'حالة غير صالحة' });
+    }
+    
+    const request = db.get("SELECT * FROM Agent_Custom_Designs WHERE Custom_Design_ID = ?", [req.params.id]);
+    if (!request) return res.status(404).json({ error: 'الطلب غير موجود' });
+    
+    db.run(
+      `UPDATE Agent_Custom_Designs SET Status = ?, Designer_ID = ?, Notes = COALESCE(?, Notes), Updated_At = CURRENT_TIMESTAMP WHERE Custom_Design_ID = ?`,
+      [status, designer_id || null, notes || null, req.params.id]
+    );
+    
+    logActivity(request.Agent_ID, `custom_design_${status}`, 'custom_design', req.params.id, { status, designer_id }, req);
+    
+    // Notify agent
+    db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
+      [request.Order_ID || 0, `تم تحديث طلب التصميم المخصص: ${status}`, 'info']);
+    
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== Admin: Agent Custom Orders ====================
+
+// List orders with agent custom uploads
+router.get('/admin/agent-custom-orders', requireAuth(['Admin']), (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+    
+    const countRow = db.get("SELECT COUNT(*) as total FROM Order_Files WHERE Upload_Type = 'agent_custom'");
+    const files = db.all(`
+      SELECT of.*, o.Task_ID, o.Status as Order_Status, o.Agent_Price, o.Agent_Commission, o.Final_Price,
+             c.Full_Name as Client_Name, u.Name as Agent_Name
+      FROM Order_Files of
+      JOIN Orders o ON of.Task_ID = o.Task_ID
+      LEFT JOIN Clients c ON o.Client_ID = c.Client_ID
+      LEFT JOIN Users u ON o.Created_By = u.User_ID
+      WHERE of.Upload_Type = 'agent_custom'
+      ORDER BY of.Created_At DESC
+      LIMIT ? OFFSET ?
+    `, [50, 0]);
+    
+    res.json({ files, total: countRow.total });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ==================== Agent: Custom Design Request ====================
+
+// Agent: Submit custom design request
+router.post('/my/custom-design', requireAuth(['Agent']), (req, res) => {
+  try {
+    const { order_id, name, description, image_path, thumbnail_path } = req.body;
+    if (!name) return res.status(400).json({ error: 'اسم التصميم مطلوب' });
+    
+    const result = db.run(
+      `INSERT INTO Agent_Custom_Designs (Agent_ID, Order_ID, Name, Description, Image_Path, Thumbnail_Path)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [req.session.userId, order_id || null, name, description || '', image_path || null, thumbnail_path || null]
+    );
+    
+    // Notify admins and designers
+    const admins = db.all("SELECT User_ID FROM Users WHERE Role IN ('Admin', 'Designer', 'Custom')");
+    admins.forEach(u => {
+      db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
+        [order_id || 0, `طلب تصميم مخصص جديد من الوكيل: ${req.session.name}`, 'info']);
+    });
+    
+    logActivity(req.session.userId, 'custom_design_requested', 'custom_design', result.lastId, { name }, req);
+    res.json({ success: true, custom_design_id: result.lastId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Agent: Get my custom design requests
+router.get('/my/custom-designs', requireAuth(['Agent']), (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = (page - 1) * limit;
+    const status = req.query.status || '';
+    
+    let where = 'WHERE c.Agent_ID = ?';
+    let params = [req.session.userId];
+    
+    if (status) {
+      where += ' AND c.Status = ?';
+      params.push(status);
+    }
+    
+    const countRow = db.get(`SELECT COUNT(*) as total FROM Agent_Custom_Designs c ${where}`, params);
+    const requests = db.all(`
+      SELECT c.*, o.Task_ID as Order_ID
+      FROM Agent_Custom_Designs c
+      LEFT JOIN Orders o ON c.Order_ID = o.Task_ID
+      ${where}
+      ORDER BY c.Created_At DESC
+      LIMIT ? OFFSET ?
+    `, [...params, limit, offset]);
+    
+    res.json({ requests, total: countRow.total, page, pages: Math.ceil(countRow.total / limit) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

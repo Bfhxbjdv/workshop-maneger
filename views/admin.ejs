@@ -44,6 +44,11 @@
           <a class="nav-link" href="#" data-tab="logs"><i class="bi bi-journal-text"></i> سجل النشاطات</a>
           <a class="nav-link" href="#" data-tab="system"><i class="bi bi-info-circle"></i> معلومات النظام</a>
           <hr>
+          <a class="nav-link" href="#" data-tab="library-images"><i class="bi bi-images"></i> صور المكتبة</a>
+          <a class="nav-link" href="#" data-tab="ready-designs"><i class="bi bi-files"></i> التصاميم الجاهزة</a>
+          <a class="nav-link" href="#" data-tab="custom-requests"><i class="bi bi-pencil-square"></i> طلبات تصاميم مخصصة</a>
+          <a class="nav-link" href="#" data-tab="agent-custom-orders"><i class="bi bi-person-lines-fill"></i> طلبات الوكلاء المخصصة</a>
+          <hr>
           <a class="nav-link" href="/users"><i class="bi bi-people"></i> إدارة المستخدمين</a>
           <a class="nav-link" href="/designs"><i class="bi bi-files"></i> ملفات التصاميم</a>
           <a class="nav-link" href="/clients"><i class="bi bi-person-lines-fill"></i> العملاء</a>
@@ -136,32 +141,166 @@
           <h4><i class="bi bi-info-circle"></i> معلومات النظام</h4>
           <div class="row mt-3"><div class="col-md-6"><table class="table table-sm" id="systemInfoTable"></table></div></div>
         </div>
+
+        <!-- Library Images Tab -->
+        <div class="tab-content d-none" id="tab-library-images">
+          <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <h4 class="mb-0"><i class="bi bi-images"></i> صور المكتبة</h4>
+            <div class="d-flex gap-2">
+              <select id="imageCategoryFilter" class="form-select form-select-sm w-auto" onchange="loadLibraryImages()">
+                <option value="">كل التصنيفات</option>
+                <option value="عام">عام</option>
+                <option value="تصاميم">تصاميم</option>
+                <option value="خامات">خامات</option>
+                <option value="أخرى">أخرى</option>
+                <option value="تصاميم جاهزة">تصاميم جاهزة</option>
+                <option value="مراجع عملاء">مراجع عملاء</option>
+              </select>
+              <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadImageModal"><i class="bi bi-upload"></i> رفع صور</button>
+            </div>
+          </div>
+          <div class="row g-2" id="libraryImagesGrid"></div>
+        </div>
+
+        <!-- Ready Designs Tab -->
+        <div class="tab-content d-none" id="tab-ready-designs">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 class="mb-0"><i class="bi bi-files"></i> التصاميم الجاهزة</h4>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#designModal"><i class="bi bi-plus"></i> إضافة تصميم</button>
+          </div>
+          <div class="card">
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead class="table-light">
+                    <tr><th>#</th><th>الاسم</th><th>الفئة</th><th>المادة</th><th>السمك</th><th>الأبعاد</th><th>الصور</th><th>الحالة</th><th>خيارات</th></tr>
+                  </thead>
+                  <tbody id="designsTableBody"></tbody>
+                </table>
+              </div>
+              <div class="card-footer p-3">
+                <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="designsPagination"></ul></nav>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Custom Requests Tab -->
+        <div class="tab-content d-none" id="tab-custom-requests">
+          <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <h4 class="mb-0"><i class="bi bi-pencil-square"></i> طلبات تصاميم مخصصة</h4>
+            <div class="d-flex gap-2">
+              <select id="customStatusFilter" class="form-select form-select-sm w-auto" onchange="loadCustomRequests()">
+                <option value="">كل الحالات</option>
+                <option value="pending">جديد</option>
+                <option value="in_progress">قيد التنفيذ</option>
+                <option value="completed">مكتمل</option>
+                <option value="cancelled">ملغي</option>
+              </select>
+              <input type="text" id="customSearch" class="form-control form-control-sm" style="width:250px" placeholder="بحث..." oninput="debounceCustomSearch()">
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead class="table-light">
+                    <tr><th>#</th><th>الوكيل</th><th>العميل</th><th>اسم التصميم</th><th>الوصف</th><th>الحالة</th><th>المصمم</th><th>التاريخ</th><th>خيارات</th></tr>
+                  </thead>
+                  <tbody id="customRequestsTableBody"></tbody>
+                </table>
+              </div>
+              <div class="card-footer p-3">
+                <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="customPagination"></ul></nav>
+              </div>
+            </div>
+          </div>
+
+        <!-- Agent Custom Orders Tab -->
+        <div class="tab-content d-none" id="tab-agent-custom-orders">
+          <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <h4 class="mb-0"><i class="bi bi-person-lines-fill"></i> طلبات الوكلاء المخصصة</h4>
+            <button class="btn btn-outline-secondary" onclick="exportAgentCustomOrders()"><i class="bi bi-download"></i> تصدير</button>
+          </div>
+          <div class="card">
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead class="table-light">
+                    <tr><th>#</th><th>الوكيل</th><th>العميل</th><th>الطلب</th><th>الملفات</th><th>التاريخ</th><th>خيارات</th></tr>
+                  </thead>
+                  <tbody id="agentCustomOrdersTableBody"></tbody>
+                </table>
+              </div>
+              <div class="card-footer p-3">
+                <nav><ul class="pagination pagination-sm mb-0 justify-content-center" id="agentCustomPagination"></ul></nav>
+              </div>
+            </div>
+          </div>
+  <!-- Design Modal -->
+  <div class="modal fade" id="designModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white"><h5><i class="bi bi-plus"></i> إضافة/تعديل تصميم</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <form id="designForm">
+          <div class="modal-body">
+            <input type="hidden" id="designId">
+            <div class="row g-2">
+              <div class="col-md-6"><label class="form-label">الاسم <span class="text-danger">*</span></label><input type="text" id="designName" class="form-control" required></div>
+              <div class="col-md-6"><label class="form-label">الفئة</label><input type="text" id="designCategory" class="form-control" placeholder="مثال: ديكور، أثاث، شعارات"></div>
+              <div class="col-md-6"><label class="form-label">المادة</label><input type="text" id="designMaterial" class="form-control" placeholder="مثال: خشب، معدن، بلاستيك"></div>
+              <div class="col-md-6"><label class="form-label">السمك</label><input type="text" id="designThickness" class="form-control" placeholder="مثال: 3مم، 5مم"></div>
+              <div class="col-md-6"><label class="form-label">العرض</label><input type="number" id="designWidth" class="form-control" step="0.1" placeholder="العرض بالمم"></div>
+              <div class="col-md-6"><label class="form-label">الارتفاع</label><input type="number" id="designHeight" class="form-control" step="0.1" placeholder="الارتفاع بالمم"></div>
+              <div class="col-md-6"><label class="form-label">الوحدة</label><input type="text" id="designUnit" class="form-control" value="مم"></div>
+              <div class="col-12"><label class="form-label">الوصف</label><textarea id="designNotes" class="form-control" rows="2"></textarea></div>
+              <div class="col-md-6"><label class="form-label">ملف التصميم <span class="text-danger">*</span></label><input type="text" id="designFilePath" class="form-control" placeholder="مسار الملف في التخزين" required></div>
+              <div class="col-md-6"><label class="form-label">الاسم الأصلي للملف</label><input type="text" id="designOriginalName" class="form-control"></div>
+              <div class="col-md-6"><label class="form-label">مسار الصورة المصغرة</label><input type="text" id="designThumbnail" class="form-control"></div>
+              <div class="col-md-6"><label class="form-label">كلمة مرور (اختياري)</label><input type="password" id="designPassword" class="form-control"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> حفظ</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
 
-  <!-- Expense Modal -->
-  <div class="modal fade" id="expenseModal" tabindex="-1">
-    <div class="modal-dialog"><div class="modal-content">
-      <div class="modal-header"><h5 class="modal-title">مصروف جديد</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-      <div class="modal-body">
-        <input id="expenseId" type="hidden">
-        <div class="mb-2"><label class="form-label">البيان *</label><input id="expenseDesc" class="form-control"></div>
-        <div class="mb-2"><label class="form-label">التصنيف</label>
-          <select id="expenseCat" class="form-select">
-            <option>مواد خام</option><option>صيانة</option><option>كهرباء</option><option>إيجار</option><option>رواتب</option><option>تسويق</option><option>أخرى</option>
-          </select>
+  <!-- Upload Image Modal -->
+  <div class="modal fade" id="uploadImageModal">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white"><h5><i class="bi bi-upload"></i> رفع صور</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <form id="uploadImageForm" enctype="multipart/form-data">
+          <div class="modal-body">
+            <div class="mb-2">
+              <label class="form-label">التصنيف</label>
+              <select id="uploadImageCategory" class="form-select">
+                <option value="عام">عام</option>
+                <option value="تصاميم">تصاميم</option>
+                <option value="خامات">خامات</option>
+                <option value="أخرى">أخرى</option>
+                <option value="تصاميم جاهزة">تصاميم جاهزة</option>
+                <option value="مراجع عملاء">مراجع عملاء</option>
+              </select>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">الصور (يمكن اختيار عدة ملفات)</label>
+              <input type="file" id="uploadImageFiles" class="form-control" accept="image/*" multiple required>
+            </div>
+          </form>
         </div>
-        <div class="mb-2"><label class="form-label">المبلغ *</label><input id="expenseAmount" type="number" step="0.01" class="form-control"></div>
-        <div class="mb-2"><label class="form-label">التاريخ</label><input id="expenseDate" type="date" class="form-control"></div>
-        <div class="mb-2"><label class="form-label">ملاحظات</label><textarea id="expenseNotes" class="form-control" rows="2"></textarea></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-success" onclick="uploadAdminImages()"><i class="bi bi-cloud-upload"></i> رفع</button>
+        </div>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-primary" onclick="saveExpense()">حفظ</button>
-        <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-      </div>
-    </div></div>
-  </div>
+    </div>
+
+  <div class="modal fade" id="expenseModal" tabindex="-1">
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
@@ -360,9 +499,227 @@
       }
     }
 
-    // Override debounce from main.js to work with this page
-    if (typeof debounce !== 'function') {
-      function debounce(fn, delay) { let timer; return function(...args) { clearTimeout(timer); timer = setTimeout(() => fn.apply(this, args), delay); }; }
+    // ============ LIBRARY IMAGES ============
+    let imagePage = 1;
+    async function loadLibraryImages(page) {
+      if (page) imagePage = page;
+      const category = document.getElementById('imageCategoryFilter').value;
+      const params = new URLSearchParams({ page: imagePage, limit: 20 });
+      if (category) params.append('category', category);
+      const d = await fetch('/api/orders/agent/images?' + params.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+      renderLibraryImages(d.images || []);
+    }
+
+    function renderLibraryImages(images) {
+      const grid = document.getElementById('libraryImagesGrid');
+      if (!images.length) {
+        grid.innerHTML = '<div class="col-12 text-center text-muted py-4">لا توجد صور. اضغط "رفع صور" لإضافة صور.</div>';
+        return;
+      }
+      grid.innerHTML = '';
+      images.forEach(img => {
+        const col = document.createElement('div');
+        col.className = 'col-6 col-md-4 col-lg-3';
+        const hasDesign = img.Design_ID ? `<span class="badge bg-success">مرتبط بتصميم: ${img.Design_Name}</span>` : '<span class="badge bg-secondary">مكتبة مستقلة</span>';
+        col.innerHTML = `
+          <div class="card h-100">
+            <img src="/api/orders/agent/images/${img.Image_ID}/file" class="card-img-top" style="height:180px;object-fit:cover" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBmaWxsPSIjZWVlIi8+PHRleHQgeD0iMzIiIHk9IjMyIiBmb250LXNpemU9IjE0IiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIj7YqQ=='">
+            <div class="card-body p-2">
+              <small class="text-truncate d-block fw-bold">${img.Original_Name}</small>
+              <span class="badge bg-secondary">${img.Category}</span>
+              ${hasDesign}
+            </div>
+            <div class="card-footer p-2 d-flex gap-1">
+              ${img.Design_ID ? `<button class="btn btn-sm btn-outline-secondary flex-fill" onclick="unlinkImageFromDesign(${img.Image_ID})"><i class="bi bi-link-45deg"></i> فك الارتباط</button>` : ''}
+              <button class="btn btn-sm btn-outline-danger flex-fill" onclick="deleteLibraryImage(${img.Image_ID})"><i class="bi bi-trash"></i> حذف</button>
+            </div>
+          </div>
+        `;
+        grid.appendChild(col);
+      });
+    }
+
+    async function uploadAdminImages() {
+      const form = document.getElementById('uploadImageForm');
+      const formData = new FormData(form);
+      try {
+        const res = await fetch('/api/orders/agent/images', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+          bootstrap.Modal.getInstance(document.getElementById('uploadImageModal')).hide();
+          form.reset();
+          loadLibraryImages();
+        } else { alert(data.error || 'فشل الرفع'); }
+      } catch (e) { alert('خطأ في الرفع'); }
+    }
+
+    function deleteLibraryImage(id) {
+      if (!confirm('حذف هذه الصورة؟')) return;
+      fetch(`/api/orders/agent/images/${id}`, { method: 'DELETE', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(r => r.json()).then(data => { if (data.success) loadLibraryImages(); else alert(data.error || 'فشل الحذف'); });
+    }
+
+    function unlinkImageFromDesign(id) {
+      fetch(`/api/orders/agent/images/${id}/link-design`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ design_id: null }) })
+        .then(r => r.json()).then(data => { if (data.success) loadLibraryImages(); else alert(data.error || 'فشل فك الارتباط'); });
+    }
+
+    // ============ DESIGNS ============
+    let designPage = 1;
+    async function loadDesigns(page) {
+      if (page) designPage = page;
+      const search = document.getElementById('designSearch')?.value || '';
+      const status = document.getElementById('designStatusFilter')?.value || '';
+      const params = new URLSearchParams({ page: designPage, limit: 10 });
+      if (search) params.append('search', search);
+      if (status) params.append('status', status);
+      const d = await fetch('/api/agents/admin/designs?' + params.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+      renderDesigns(d.designs || []);
+      renderPagination2(d.total, d.page, d.pages, 'designsPagination', loadDesigns);
+    }
+
+    function renderDesigns(designs) {
+      const tbody = document.getElementById('designsTableBody');
+      if (!designs.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">لا توجد تصاميم</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      designs.forEach(d => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${d.Design_ID}</td>
+          <td>${d.Name}</td>
+          <td>${d.Category || '-'}</td>
+          <td>${d.Material || '-'}</td>
+          <td>${d.Thickness || '-'}</td>
+          <td>${d.Width ? d.Width + ' ' + (d.Unit || '') : '-'} x ${d.Height ? d.Height + ' ' + (d.Unit || '') : '-'}</td>
+          <td>${d.Image_Count || 0}</td>
+          <td>${d.Is_Active ? '<span class="badge bg-success">نشط</span>' : '<span class="badge bg-secondary">غير نشط</span>'}</td>
+          <td>
+            <button class="btn btn-sm btn-outline-primary" onclick="editDesign(${d.Design_ID})"><i class="bi bi-pencil"></i></button>
+            <button class="btn btn-sm btn-outline-danger" onclick="deleteDesign(${d.Design_ID})"><i class="bi bi-trash"></i></button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function editDesign(id) { loadDesigns(); }
+    function deleteDesign(id) {
+      if (!confirm('حذف هذا التصميم؟')) return;
+      fetch(`/api/agents/admin/designs/${id}`, { method: 'DELETE', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(r => r.json()).then(data => { if (data.success) loadDesigns(); else alert(data.error || 'فشل الحذف'); });
+    }
+
+    // ============ CUSTOM REQUESTS ============
+    let customPage = 1;
+    const debouncedCustomSearch = debounce(() => loadCustomRequests(), 300);
+
+    async function loadCustomRequests(page) {
+      if (page) customPage = page;
+      const status = document.getElementById('customStatusFilter').value;
+      const search = document.getElementById('customSearch').value;
+      const params = new URLSearchParams({ page: customPage, limit: 20 });
+      if (status) params.append('status', status);
+      if (search) params.append('search', search);
+      const d = await fetch('/api/agents/admin/custom-requests?' + params.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+      renderCustomRequests(d.requests || []);
+      renderPagination2(d.total, d.page, d.pages, 'customPagination', loadCustomRequests);
+    }
+
+    function renderCustomRequests(requests) {
+      const tbody = document.getElementById('customRequestsTableBody');
+      if (!requests.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">لا توجد طلبات</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      requests.forEach(r => {
+        const statusBadges = { 'pending': 'bg-warning text-dark', 'in_progress': 'bg-info', 'completed': 'bg-success', 'cancelled': 'bg-danger' };
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${r.Custom_Design_ID}</td>
+          <td>${r.Agent_Name}</td>
+          <td>${r.Client_Name || '-'}</td>
+          <td>${r.Name}</td>
+          <td><small>${r.Description || '-'}</small></td>
+          <td><span class="badge ${statusBadges[r.Status] || 'bg-secondary'}">${r.Status}</span></td>
+          <td>${r.Designer_ID ? 'مصمم #' + r.Designer_ID : '-'}</td>
+          <td><small>${new Date(r.Created_At).toLocaleDateString('ar-SA')}</small></td>
+          <td>
+            <button class="btn btn-sm btn-outline-primary" onclick="updateCustomRequestStatus(${r.Custom_Design_ID})"><i class="bi bi-pencil"></i></button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateCustomRequestStatus(id) {
+      const status = prompt('الحالة الجديدة (pending/in_progress/completed/cancelled):');
+      if (!status) return;
+      const designer_id = prompt('معرف المصمم (اختياري):');
+      fetch(`/api/agents/admin/custom-requests/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ status, designer_id: designer_id || null }) })
+        .then(r => r.json()).then(data => { if (data.success) loadCustomRequests(); else alert(data.error || 'فشل التحديث'); });
+    }
+
+    // ============ AGENT CUSTOM ORDERS ============
+    let agentCustomPage = 1;
+    async function loadAgentCustomOrders(page) {
+      if (page) agentCustomPage = page;
+      const d = await fetch('/api/agents/admin/agent-custom-orders?page=' + agentCustomPage + '&limit=20', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+      renderAgentCustomOrders(d.files || []);
+      renderPagination2(d.total, d.page, d.pages, 'agentCustomPagination', loadAgentCustomOrders);
+    }
+
+    function renderAgentCustomOrders(files) {
+      const tbody = document.getElementById('agentCustomOrdersTableBody');
+      if (!files.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">لا توجد طلبات مخصصة</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      files.forEach(f => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${f.File_ID}</td>
+          <td>${f.Agent_Name}</td>
+          <td>${f.Client_Name}</td>
+          <td>#${f.Task_ID}</td>
+          <td>${f.Original_Name}</td>
+          <td><small>${new Date(f.Created_At).toLocaleString('ar-SA')}</small></td>
+          <td><button class="btn btn-sm btn-outline-primary" onclick="viewOrder(${f.Task_ID})"><i class="bi bi-eye"></i></button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function exportAgentCustomOrders() { alert('ميزة التصدير قيد التطوير'); }
+
+    // Add tab load handlers
+    document.querySelectorAll('[data-tab]').forEach(link => {
+      link.addEventListener('click', function(e) {
+        const tab = this.dataset.tab;
+        if (tab === 'library-images') loadLibraryImages();
+        if (tab === 'ready-designs') loadDesigns();
+        if (tab === 'custom-requests') loadCustomRequests();
+        if (tab === 'agent-custom-orders') loadAgentCustomOrders();
+      });
+    });
+
+    // Upload images handler
+    async function uploadAdminImages() {
+      const form = document.getElementById('uploadImageForm');
+      const formData = new FormData(form);
+      try {
+        const res = await fetch('/api/orders/agent/images', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+          bootstrap.Modal.getInstance(document.getElementById('uploadImageModal')).hide();
+          form.reset();
+          loadLibraryImages();
+        } else { alert(data.error || 'فشل الرفع'); }
+      } catch (e) { alert('خطأ في الرفع'); }
     }
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>

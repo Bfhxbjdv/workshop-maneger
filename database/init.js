@@ -110,6 +110,7 @@ async function initDatabase() {
       File_Size REAL DEFAULT 0,
       Label TEXT DEFAULT '',
       File_Type TEXT DEFAULT 'design',
+      Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library')),
       Uploaded_By INTEGER,
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (Task_ID) REFERENCES Orders(Task_ID) ON DELETE CASCADE,
@@ -184,6 +185,7 @@ async function initDatabase() {
       File_Path TEXT NOT NULL,
       File_Size REAL DEFAULT 0,
       Uploaded_By INTEGER,
+      Design_ID INTEGER REFERENCES Designs(Design_ID),
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (Uploaded_By) REFERENCES Users(User_ID)
     );
@@ -295,6 +297,18 @@ async function initDatabase() {
       User_Agent TEXT,
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS Agent_Custom_Designs (
+      Custom_Design_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Agent_ID INTEGER NOT NULL REFERENCES Users(User_ID),
+      Order_ID INTEGER REFERENCES Orders(Task_ID),
+      Name TEXT NOT NULL,
+      Description TEXT,
+      Image_Path TEXT,
+      Thumbnail_Path TEXT,
+      Status TEXT DEFAULT 'pending' CHECK(Status IN ('pending','in_progress','completed','cancelled')),
+      Created_At DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   const existing = db.query("SELECT COUNT(*) as cnt FROM Users");
@@ -397,9 +411,15 @@ async function initDatabase() {
   } catch (e) {}
 
   try {
+    db.exec("ALTER TABLE Agent_Images ADD COLUMN Design_ID INTEGER REFERENCES Designs(Design_ID)");
+    console.log('✅ Added Design_ID column to Agent_Images');
+  } catch (e) {}
+
+  try {
     const fileCols = db.query("PRAGMA table_info(Order_Files)");
     if (!fileCols.some(c => c.name === 'Label')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Label TEXT DEFAULT ''"); console.log('✅ Added Label column'); }
     if (!fileCols.some(c => c.name === 'File_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN File_Type TEXT DEFAULT 'design'"); console.log('✅ Added File_Type column'); }
+    if (!fileCols.some(c => c.name === 'Upload_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library'))"); console.log('✅ Added Upload_Type column'); }
   } catch (e) {}
 
   try {
