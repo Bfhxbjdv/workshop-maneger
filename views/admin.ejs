@@ -317,7 +317,7 @@
           </div>
           <div class="modal-footer">
           <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-          <button type="button" class="btn btn-success" onclick="uploadAdminImages()"><i class="bi bi-cloud-upload"></i> رفع</button>
+          <button type="button" id="uploadAdminImagesButton" class="btn btn-success"><i class="bi bi-cloud-upload"></i> رفع</button>
           </div>
         </form>
         </div>
@@ -1001,6 +1001,7 @@
     // Initial load
     loadAdminStats();
     refreshPendingBadge();
+    document.getElementById('uploadAdminImagesButton').addEventListener('click', uploadAdminImages);
 
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
