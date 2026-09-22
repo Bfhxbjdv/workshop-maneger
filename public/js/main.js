@@ -811,8 +811,40 @@ async function loadInventory() {
   });
 }
 
+async function editMaterial(id) {
+  try {
+    const materials = await fetch('/api/inventory').then(r => r.json());
+    const material = materials.find(m => Number(m.Material_ID) === Number(id));
+    if (!material) { showToast('المادة غير موجودة', 'danger'); return; }
+    const modal = document.getElementById('inventoryModal');
+    modal.dataset.materialId = String(id);
+    document.getElementById('editMaterialId').value = id;
+    document.getElementById('materialName').value = material.Material_Name || '';
+    document.getElementById('materialThickness').value = material.Thickness || '';
+    document.getElementById('materialQty').value = material.Quantity ?? 0;
+    document.getElementById('materialCost').value = material.Cost_Per_Unit ?? 0;
+    new bootstrap.Modal(document.getElementById('inventoryModal')).show();
+  } catch (e) {
+    showToast('فشل تحميل بيانات المادة: ' + e.message, 'danger');
+  }
+}
+
+function resetMaterialForm() {
+  document.getElementById('inventoryModal')?.removeAttribute('data-material-id');
+  document.getElementById('editMaterialId').value = '';
+  document.getElementById('materialName').value = '';
+  document.getElementById('materialThickness').value = '';
+  document.getElementById('materialQty').value = '';
+  document.getElementById('materialCost').value = '';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = document.getElementById('inventoryModal');
+  if (modal) modal.addEventListener('hidden.bs.modal', resetMaterialForm);
+});
+
 function saveMaterial() {
-  const id = document.getElementById('editMaterialId').value;
+  const id = document.getElementById('editMaterialId').value || document.getElementById('inventoryModal')?.dataset.materialId || '';
   const data = { Material_Name: document.getElementById('materialName').value, Thickness: document.getElementById('materialThickness').value, Quantity: parseFloat(document.getElementById('materialQty').value) || 0, Cost_Per_Unit: parseFloat(document.getElementById('materialCost').value) || 0 };
   const method = id ? 'PUT' : 'POST';
   const url = id ? `/api/inventory/${id}` : '/api/inventory';
