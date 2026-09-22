@@ -48,6 +48,7 @@
           <a class="nav-link" href="#" data-tab="ready-designs"><i class="bi bi-files"></i> التصاميم الجاهزة</a>
           <a class="nav-link" href="#" data-tab="custom-requests"><i class="bi bi-pencil-square"></i> طلبات تصاميم مخصصة</a>
           <a class="nav-link" href="#" data-tab="agent-custom-orders"><i class="bi bi-person-lines-fill"></i> طلبات الوكلاء المخصصة</a>
+          <a class="nav-link" href="#" data-tab="pending-approvals"><i class="bi bi-hourglass-split"></i> طلبات بانتظار الموافقة <span class="badge bg-warning text-dark" id="pendingCountBadge" style="display:none">0</span></a>
           <hr>
           <a class="nav-link" href="/users"><i class="bi bi-people"></i> إدارة المستخدمين</a>
           <a class="nav-link" href="/designs"><i class="bi bi-files"></i> ملفات التصاميم</a>
@@ -237,6 +238,26 @@
               </div>
             </div>
           </div>
+        <!-- Pending Approvals Tab -->
+        <div class="tab-content d-none" id="tab-pending-approvals">
+          <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+            <h4 class="mb-0"><i class="bi bi-hourglass-split"></i> طلبات الوكلاء بانتظار الموافقة</h4>
+            <button class="btn btn-outline-secondary btn-sm" onclick="loadPendingApprovals()"><i class="bi bi-arrow-repeat"></i> تحديث</button>
+          </div>
+          <div class="alert alert-info small">الموافقة تُسند الطلب تلقائياً للمصمم المختار ويظهر عنده فوراً كطلب عادي. الرفض يلغي الطلب مع إشعار الوكيل.</div>
+          <div class="card">
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead class="table-light">
+                    <tr><th>#</th><th>الوكيل</th><th>العميل</th><th>الماكينة</th><th>الكمية (لوح)</th><th>السعر النهائي</th><th>ملاحظات</th><th>التاريخ</th><th>خيارات</th></tr>
+                  </thead>
+                  <tbody id="pendingApprovalsTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
   <!-- Design Modal -->
   <div class="modal fade" id="designModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -334,6 +355,31 @@
           <div class="modal-footer">
             <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
             <button type="submit" class="btn btn-success"><i class="bi bi-check-lg"></i> موافقة وبدء التنفيذ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approve Order Modal (agent pending orders) -->
+  <div class="modal fade" id="approveOrderModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white"><h5 id="approveOrderTitle"><i class="bi bi-check-lg"></i> الموافقة على الطلب</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <form id="approveOrderForm">
+          <div class="modal-body">
+            <input type="hidden" id="approveOrderId">
+            <div class="alert alert-info small">سيُسند الطلب للمصمم المختار ويظهر عنده فوراً كطلب عادي.</div>
+            <div class="mb-2">
+              <label class="form-label">المصمم الذي سيستلم الطلب <span class="text-danger">*</span></label>
+              <select id="approveOrderDesigner" class="form-select" required>
+                <option value="">-- اختر المصمم --</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+            <button type="submit" class="btn btn-success"><i class="bi bi-check-lg"></i> موافقة</button>
           </div>
         </form>
       </div>
@@ -806,6 +852,104 @@
 
     function exportAgentCustomOrders() { alert('ميزة التصدير قيد التطوير'); }
 
+    // ============ PENDING APPROVALS (agent orders) ============
+    async function loadPendingApprovals() {
+      const tbody = document.getElementById('pendingApprovalsTableBody');
+      try {
+        const d = await fetch('/api/orders/pending', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+        const orders = d.orders || [];
+        updatePendingBadge(orders.length);
+        if (!orders.length) {
+          tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">لا توجد طلبات بانتظار الموافقة 🎉</td></tr>';
+          return;
+        }
+        tbody.innerHTML = '';
+        orders.forEach(o => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><strong>#${o.Task_ID}</strong></td>
+            <td>${o.Agent_Name || '-'}</td>
+            <td>${o.Client_Name || '-'}</td>
+            <td><span class="badge bg-${o.Machine_Type === 'Laser' ? 'danger' : 'success'}">${o.Machine_Type}</span></td>
+            <td>${o.Material_Qty || 0}</td>
+            <td>${o.Final_Price ? parseFloat(o.Final_Price).toLocaleString() : '-'}</td>
+            <td><small class="text-muted">${(o.Notes || '').substring(0, 60)}</small></td>
+            <td><small>${o.Created_At ? new Date(o.Created_At).toLocaleString('ar-SA') : ''}</small></td>
+            <td class="text-nowrap">
+              <button class="btn btn-sm btn-success" onclick="openOrderApproveModal(${o.Task_ID})"><i class="bi bi-check-lg"></i> موافقة</button>
+              <button class="btn btn-sm btn-outline-danger" onclick="rejectPendingOrder(${o.Task_ID})"><i class="bi bi-x-lg"></i> رفض</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger">فشل التحميل</td></tr>';
+      }
+    }
+
+    function updatePendingBadge(count) {
+      const badge = document.getElementById('pendingCountBadge');
+      if (!badge) return;
+      badge.textContent = count;
+      badge.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+
+    async function refreshPendingBadge() {
+      try {
+        const d = await fetch('/api/orders/pending', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+        updatePendingBadge((d.orders || []).length);
+      } catch {}
+    }
+
+    async function openOrderApproveModal(taskId) {
+      document.getElementById('approveOrderId').value = taskId;
+      document.getElementById('approveOrderTitle').textContent = 'الموافقة على الطلب #' + taskId;
+      const dsel = document.getElementById('approveOrderDesigner');
+      dsel.innerHTML = '<option value="">-- اختر المصمم --</option>';
+      try {
+        const users = await fetch('/api/users', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+        (Array.isArray(users) ? users : []).filter(u => u.Role === 'Designer').forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.User_ID;
+          opt.textContent = `${u.Name} (@${u.Username})`;
+          dsel.appendChild(opt);
+        });
+      } catch (e) { console.error(e); }
+      new bootstrap.Modal(document.getElementById('approveOrderModal')).show();
+    }
+
+    document.getElementById('approveOrderForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const id = document.getElementById('approveOrderId').value;
+      const designer_id = document.getElementById('approveOrderDesigner').value;
+      if (!designer_id) { alert('اختر المصمم أولاً'); return; }
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/orders/${id}/approve`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'approve', designer_id: parseInt(designer_id, 10) }) });
+        let data = null;
+        try { data = await res.json(); } catch { data = null; }
+        if (res.ok && data && data.success) {
+          bootstrap.Modal.getInstance(document.getElementById('approveOrderModal')).hide();
+          loadPendingApprovals();
+          alert(`✅ تمت الموافقة — الطلب #${id} ظهر الآن عند الرسام`);
+        } else {
+          alert((data && data.error) || `فشل التحديث (رمز ${res.status})`);
+        }
+      } catch (err) { console.error(err); alert('خطأ في الاتصال'); }
+      finally { btn.disabled = false; }
+    });
+
+    async function rejectPendingOrder(taskId) {
+      const reason = prompt('سبب الرفض (اختياري):');
+      if (reason === null) return;
+      const res = await fetch(`/api/orders/${taskId}/approve`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ action: 'reject', reason }) });
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      if (res.ok && data && data.success) { loadPendingApprovals(); }
+      else { alert((data && data.error) || 'فشل الرفض'); }
+    }
+
     // Add tab load handlers
     document.querySelectorAll('[data-tab]').forEach(link => {
       link.addEventListener('click', function(e) {
@@ -814,8 +958,13 @@
         if (tab === 'ready-designs') loadDesigns();
         if (tab === 'custom-requests') loadCustomRequests();
         if (tab === 'agent-custom-orders') loadAgentCustomOrders();
+        if (tab === 'pending-approvals') loadPendingApprovals();
       });
     });
+
+    // Initial load
+    loadAdminStats();
+    refreshPendingBadge();
 
     // Upload images handler
     async function uploadAdminImages() {

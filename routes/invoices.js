@@ -95,10 +95,11 @@ async function generatePdf(invoice, order, client, materials) {
   doc.text('Total Amount:', col1, y);
   doc.text(`${invoice.Amount.toFixed(2)} SYP`, col4, y);
   y += 20;
+  const paidSoFar = (invoice.Amount_Paid === null || invoice.Amount_Paid === undefined) ? invoice.Amount : invoice.Amount_Paid;
   doc.text('Amount Paid:', col1, y);
-  doc.text(`${(invoice.Amount_Paid || invoice.Amount).toFixed(2)} SYP`, col4, y);
+  doc.text(`${paidSoFar.toFixed(2)} SYP`, col4, y);
   y += 20;
-  const remaining = invoice.Amount - (invoice.Amount_Paid || invoice.Amount);
+  const remaining = invoice.Amount - paidSoFar;
   if (remaining > 0) {
     doc.text('Remaining:', col1, y);
     doc.text(`${remaining.toFixed(2)} SYP`, col4, y);
@@ -112,8 +113,9 @@ async function generatePdf(invoice, order, client, materials) {
   doc.text('Kazanji Group - This is a computer-generated invoice', { align: 'center' });
 
   doc.end();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     stream.on('finish', () => resolve({ filePath, fileName }));
+    stream.on('error', (err) => reject(err));
   });
 }
 
@@ -174,15 +176,27 @@ router.post('/', requirePermission('invoices'), async (req, res) => {
     WHERE om.Task_ID = ?
   `, [Order_Task_ID]);
 
-  const pdf = await generatePdf(invoice, order, client, materials);
+  let pdf;
+  try {
+    pdf = await generatePdf(invoice, order, client, materials);
+  } catch (e) {
+    console.error('Invoice PDF error:', e);
+    return res.status(500).json({ error: 'تم إنشاء الفاتورة لكن فشل توليد ملف PDF — أعد تنزيله لاحقاً من صفحة الفواتير' });
+  }
   db.run("UPDATE Invoices SET File_Path=? WHERE Invoice_ID=?", [pdf.fileName, result.lastId]);
 
+  // Google Drive is best-effort: a network failure must never fail the whole
+  // invoice (the row already exists, so a retry would hit "duplicate invoice").
   const useGdrive = gdrive.isConfigured();
   if (useGdrive) {
-    const fileBuffer = fs.readFileSync(pdf.filePath);
-    const driveResult = await gdrive.uploadFile(`INV-${invoice.Invoice_ID}`, 'Invoices', pdf.fileName, fileBuffer);
-    if (!driveResult.error) {
-      db.run("UPDATE Invoices SET File_Path=? WHERE Invoice_ID=?", [`gdrive://${driveResult.fileId}`, result.lastId]);
+    try {
+      const fileBuffer = fs.readFileSync(pdf.filePath);
+      const driveResult = await gdrive.uploadFile(`INV-${invoice.Invoice_ID}`, 'Invoices', pdf.fileName, fileBuffer);
+      if (driveResult && !driveResult.error && driveResult.fileId) {
+        db.run("UPDATE Invoices SET File_Path=? WHERE Invoice_ID=?", [`gdrive://${driveResult.fileId}`, result.lastId]);
+      }
+    } catch (e) {
+      console.error('Invoice Drive upload skipped:', e.message);
     }
   }
 

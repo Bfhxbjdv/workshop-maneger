@@ -43,7 +43,9 @@ function deliverOrder(taskId, price) {
   }
 
   const finalPrice = price === undefined ? Number(order.Price || 0) : Number(price);
-  db.run('UPDATE Clients SET Total_Spent = Total_Spent + ? WHERE Client_ID=?', [totalCost, order.Client_ID]);
+  // Total_Spent is what the client paid (the price), not what the workshop
+  // spent on materials (the cost — already stored in Orders.Cost).
+  db.run('UPDATE Clients SET Total_Spent = Total_Spent + ? WHERE Client_ID=?', [finalPrice, order.Client_ID]);
   db.run("UPDATE Orders SET Status='تم التسليم', Price=?, Cost=?, Profit=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [finalPrice, totalCost, finalPrice - totalCost, taskId]);
   return { order: db.get('SELECT * FROM Orders WHERE Task_ID=?', [taskId]), alreadyDelivered: false };
 }

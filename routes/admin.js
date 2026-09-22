@@ -10,8 +10,8 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Admin page
-router.get('/', requirePermission('admin'), (req, res) => {
+// Admin page (Admin-only, matching the APIs below)
+router.get('/', requireAdmin, (req, res) => {
   res.render('admin', { user: res.locals.user });
 });
 
@@ -89,6 +89,7 @@ router.post('/api/backup', requireAdmin, (req, res) => {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const src = path.join(__dirname, '..', 'data', 'workshop.db');
     const dest = path.join(backupDir, `workshop-backup-${timestamp}.db`);
+    try { db.saveDb(); } catch {}
     if (fs.existsSync(src)) {
       fs.copyFileSync(src, dest);
       db.run("INSERT INTO System_Logs (Action, User_ID, Details) VALUES (?, ?, ?)", ['نسخ احتياطي', req.session.userId, dest]);

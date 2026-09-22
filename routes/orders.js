@@ -186,7 +186,7 @@ router.put('/:id', requirePermission('orders'), (req, res) => {
   if (!oldOrder) return res.status(404).json({ error: 'الطلب غير موجود' });
   if (!canAccessOrder(req, oldOrder)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
   if (Status === 'تم التسليم') {
-    if (req.session.role !== 'Admin' && req.session.role !== 'Custom') return res.status(403).json({ error: 'تسليم الطلبات متاح للمدير فقط' });
+    if (!['Admin', 'Custom', 'Laser_Op', 'Router_Op'].includes(req.session.role)) return res.status(403).json({ error: 'تسليم الطلبات متاح للمدير أو عامل الماكينة فقط' });
     const result = deliverOrder(req.params.id);
     if (result.error) return res.status(400).json({ error: result.error });
     db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)", [req.params.id, `تم تسليم الطلب #${req.params.id}`, 'success']);
@@ -219,7 +219,7 @@ router.put('/:id/status', requirePermission('orders'), (req, res) => {
   if (!oldOrder) return res.status(404).json({ error: 'الطلب غير موجود' });
   if (!canAccessOrder(req, oldOrder)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
   if (Status === 'تم التسليم') {
-    if (req.session.role !== 'Admin' && req.session.role !== 'Custom') return res.status(403).json({ error: 'تسليم الطلبات متاح للمدير فقط' });
+    if (!['Admin', 'Custom', 'Laser_Op', 'Router_Op'].includes(req.session.role)) return res.status(403).json({ error: 'تسليم الطلبات متاح للمدير أو عامل الماكينة فقط' });
     const result = deliverOrder(req.params.id);
     if (result.error) return res.status(400).json({ error: result.error });
   } else {
@@ -258,10 +258,17 @@ router.post('/:id/duplicate', requirePermission('orders'), (req, res) => {
   if (!old) return res.status(404).json({ error: 'الطلب غير موجود' });
   if (!canAccessOrder(req, old)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
+  const isAgentDup = req.session.role === 'Agent';
   const result = db.run(
-    `INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes)
-     VALUES (?, ?, ?, 'قيد التصميم', ?)`,
-    [old.Client_ID, req.session.userId, old.Machine_Type, `مكرر من طلب #${old.Task_ID} - ${old.Notes || ''}`]
+    `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [old.Client_ID,
+     isAgentDup ? null : (old.Designer_ID || req.session.userId),
+     req.session.userId,
+     old.Machine_Type,
+     isAgentDup ? 'بانتظار الموافقة' : 'قيد التصميم',
+     isAgentDup ? 'pending' : 'approved',
+     `مكرر من طلب #${old.Task_ID} - ${old.Notes || ''}`]
   );
 
   if (!result.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
@@ -298,6 +305,8 @@ router.delete('/:id', requirePermission('orders'), (req, res) => {
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
   if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
   if (!['Admin', 'Designer', 'Custom'].includes(req.session.role)) return res.status(403).json({ error: 'حذف الطلبات غير متاح لهذا الدور' });
+  const linkedInvoice = db.get("SELECT Invoice_ID, Invoice_Number FROM Invoices WHERE Order_Task_ID=?", [req.params.id]);
+  if (linkedInvoice) return res.status(400).json({ error: `لا يمكن حذف الطلب لوجود فاتورة مرتبطة (${linkedInvoice.Invoice_Number}) — احذف الفاتورة أولاً` });
   const archiveRoot = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
   const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=?", [req.params.id]);
   if (files) {
@@ -339,6 +348,9 @@ router.delete('/:id', requirePermission('orders'), (req, res) => {
   }
   db.run("DELETE FROM Order_Materials WHERE Task_ID=?", [req.params.id]);
   db.run("DELETE FROM Notifications WHERE Task_ID=?", [req.params.id]);
+  db.run("DELETE FROM Agent_Commissions WHERE Order_ID=?", [req.params.id]);
+  db.run("DELETE FROM Receipts WHERE Order_Task_ID=?", [req.params.id]);
+  db.run("UPDATE Agent_Custom_Designs SET Order_ID=NULL WHERE Order_ID=?", [req.params.id]);
   db.run("DELETE FROM Orders WHERE Task_ID=?", [req.params.id]);
   if (global.io) global.io.emit('order-update', { Task_ID: parseInt(req.params.id), _deleted: true });
   res.json({ success: true });

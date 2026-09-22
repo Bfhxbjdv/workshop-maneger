@@ -105,6 +105,9 @@ router.put('/:id', requirePermission('clients'), (req, res) => {
   const scope = getClientsScope(req);
   const current = db.get(`SELECT * FROM Clients WHERE Client_ID=? AND ${scope.sql}`, [req.params.id, ...scope.params]);
   if (!current) return res.status(404).json({ error: 'العميل غير موجود' });
+  if (Rating !== undefined && Rating !== null && Rating !== '' && (!Number.isInteger(Number(Rating)) || Number(Rating) < 1 || Number(Rating) > 5)) {
+    return res.status(400).json({ error: 'التقييم يجب أن يكون رقماً من 1 إلى 5' });
+  }
 
   db.run(
     "UPDATE Clients SET Full_Name=COALESCE(?,Full_Name), Phone_Number=COALESCE(?,Phone_Number), Rating=COALESCE(?,Rating), Notes=COALESCE(?,Notes) WHERE Client_ID=?",
@@ -115,6 +118,16 @@ router.put('/:id', requirePermission('clients'), (req, res) => {
 
 router.delete('/:id', requirePermission('clients'), (req, res) => {
   const scope = getClientsScope(req);
+  const current = db.get(`SELECT * FROM Clients WHERE Client_ID=? AND ${scope.sql}`, [req.params.id, ...scope.params]);
+  if (!current) return res.status(404).json({ error: 'العميل غير موجود' });
+  const orderCount = db.get("SELECT COUNT(*) as cnt FROM Orders WHERE Client_ID=?", [req.params.id]);
+  if (orderCount && orderCount.cnt > 0) {
+    return res.status(400).json({ error: `لا يمكن حذف العميل لوجود ${orderCount.cnt} طلب مرتبط به — احذف الطلبات أولاً` });
+  }
+  const invCount = db.get("SELECT COUNT(*) as cnt FROM Invoices WHERE Client_ID=?", [req.params.id]);
+  if (invCount && invCount.cnt > 0) {
+    return res.status(400).json({ error: 'لا يمكن حذف العميل لوجود فواتير مرتبطة به — احذف الفواتير أولاً' });
+  }
   db.run(`DELETE FROM Clients WHERE Client_ID=? AND ${scope.sql}`, [req.params.id, ...scope.params]);
   res.json({ success: true });
 });

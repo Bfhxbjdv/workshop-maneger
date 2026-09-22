@@ -13,9 +13,9 @@ if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
 
 const upload = multer({
   dest: path.join(__dirname, '..', 'uploads'),
-  limits: { fileSize: 25 * 1024 * 1024, files: 10, fields: 20 },
+  limits: { fileSize: 25 * 1024 * 1024, files: 50, fields: 20 },
   fileFilter: (req, file, cb) => {
-    const allowed = new Set(['.dxf', '.plt', '.svg', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.ai', '.eps', '.cdr', '.txt']);
+    const allowed = new Set(['.dxf', '.plt', '.svg', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ai', '.eps', '.cdr', '.txt']);
     cb(null, allowed.has(path.extname(file.originalname || '').toLowerCase()));
   }
 });
@@ -130,7 +130,13 @@ router.post('/upload/:taskId', requirePermission('orders'), upload.array('files'
       results.push({ originalName: file.originalname, label, storedName, size: file.size });
     }
 
-    db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [firstFilePath, firstFileName, taskId]);
+    // Only advance to ready-to-cut from the design phase — never move
+    // pending-approval or already-delivered orders backwards/forwards.
+    if (order.Status === 'قيد التصميم') {
+      db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [firstFilePath, firstFileName, taskId]);
+    } else {
+      db.run("UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [firstFilePath, firstFileName, taskId]);
+    }
 
     db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)", [taskId, `تم رفع ${results.length} ملف(ات) للطلب #${taskId}`, 'info']);
 
@@ -263,7 +269,11 @@ router.post('/copy/:taskId', requirePermission('orders'), async (req, res) => {
     if (copied.length) {
       const first = db.get("SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_ID LIMIT 1", [taskId]);
       if (first) {
-        db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [first.File_Path, first.Original_Name, taskId]);
+        if (order.Status === 'قيد التصميم') {
+          db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [first.File_Path, first.Original_Name, taskId]);
+        } else {
+          db.run("UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [first.File_Path, first.Original_Name, taskId]);
+        }
       }
       db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)", [taskId, `تم استرجاع ${copied.length} ملف(ات) للطلب #${taskId}`, 'info']);
     }
@@ -445,7 +455,14 @@ router.delete('/file/:fileId', requirePermission('orders'), async (req, res) => 
 
   const remaining = db.get("SELECT COUNT(*) as cnt FROM Order_Files WHERE Task_ID=?", [file.Task_ID]);
   if (remaining && remaining.cnt === 0) {
-    db.run("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Status='قيد التصميم', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [file.Task_ID]);
+    const cur = db.get("SELECT Status FROM Orders WHERE Task_ID=?", [file.Task_ID]);
+    // Only send back to design phase from ready-to-cut; never touch
+    // delivered or pending-approval orders.
+    if (cur && cur.Status === 'جاهز للقص') {
+      db.run("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Status='قيد التصميم', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [file.Task_ID]);
+    } else {
+      db.run("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [file.Task_ID]);
+    }
   }
 
   const updated = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [file.Task_ID]);
@@ -480,7 +497,12 @@ router.delete('/:taskId', requirePermission('orders'), async (req, res) => {
     }
   }
 
-  db.run("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Status='قيد التصميم', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [req.params.taskId]);
+  const curSt = db.get("SELECT Status FROM Orders WHERE Task_ID=?", [req.params.taskId]);
+  if (curSt && curSt.Status === 'جاهز للقص') {
+    db.run("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Status='قيد التصميم', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [req.params.taskId]);
+  } else {
+    db.run("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [req.params.taskId]);
+  }
   const updated = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [req.params.taskId]);
   if (global.io) global.io.emit('order-update', updated);
   res.json({ order: updated });

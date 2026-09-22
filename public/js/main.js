@@ -83,7 +83,6 @@ function loadOrders(page = 1, filter = currentFilter) {
             <button class="btn btn-outline-info" onclick="openRestoreFromOrder(${o.Task_ID})" title="استرجاع ملفات من طلب قديم"><i class="bi bi-arrow-counterclockwise"></i></button>
             <a href="/client/${o.Client_ID}" class="btn btn-outline-dark" title="عرض ملفات العميل"><i class="bi bi-folder"></i></a>
             ${hasFile ? `<button class="btn btn-outline-warning" onclick="deleteFile(${o.Task_ID})" title="حذف الملف"><i class="bi bi-file-x"></i></button>` : ''}
-            ${isCutDone ? `<button class="btn btn-sm btn-success" onclick="markDelivered(${o.Task_ID})" title="تم التسليم"><i class="bi bi-check-circle"></i> تم التسليم</button>` : ''}
             ${isDelivered ? `<button class="btn btn-outline-danger" onclick="createInvoiceFromOrder(${o.Task_ID})" title="إنشاء فاتورة"><i class="bi bi-receipt"></i></button>` : ''}
             ${isDelivered ? `<a href="/api/orders/${o.Task_ID}/receipt/pdf" class="btn btn-outline-success btn-sm" title="فاتورة استلام"><i class="bi bi-file-earmark-pdf"></i></a>` : ''}
             <button class="btn btn-outline-danger" onclick="deleteOrder(${o.Task_ID})" title="حذف الطلب"><i class="bi bi-trash"></i></button>
@@ -639,7 +638,11 @@ async function loadStats() {
   document.getElementById('totalOrders').textContent = data.totalOrders;
   document.getElementById('activeOrders').textContent = data.activeOrders;
   document.getElementById('totalClients').textContent = data.totalClients;
-  document.getElementById('notifCount').textContent = '0';
+  try {
+    const notifs = await fetch('/api/orders/notifications').then(r => r.json());
+    const unread = Array.isArray(notifs) ? notifs.filter(n => !n.Is_Read).length : 0;
+    document.getElementById('notifCount').textContent = unread;
+  } catch { document.getElementById('notifCount').textContent = '0'; }
   const tbody = document.getElementById('recentOrders');
   if (tbody && data.recentOrders) {
     tbody.innerHTML = data.recentOrders.map(o => `<tr>

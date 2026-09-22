@@ -89,6 +89,7 @@ app.use((req, res, next) => {
       permissions = user ? JSON.parse(user.Permissions || '{}') : {};
     } catch {}
     res.locals.user = {
+      id: req.session.userId,
       name: req.session.name,
       role: req.session.role,
       username: req.session.username,
@@ -181,6 +182,15 @@ app.get('/agents/:id', requireAuth(['Admin']), (req, res) => {
 app.get('/account', (req, res) => {
   if (!req.session.userId) return res.redirect('/login');
   res.render('account', { user: res.locals.user });
+});
+
+// JSON error responses for API routes (multer limits, FK violations, etc.)
+// so the frontend always gets parseable JSON instead of an HTML error page.
+app.use('/api', (err, req, res, next) => {
+  console.error('API error:', err.message);
+  if (res.headersSent) return next(err);
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({ error: err.message || 'خطأ في الخادم' });
 });
 
 io.on('connection', (socket) => {

@@ -184,7 +184,7 @@ router.post('/batch', requirePermission('admin'), upload.fields([{ name: 'files'
         let thumbPath = null;
         const thumbFile = thumbArr[i];
         if (thumbFile) {
-          thumbPath = path.join(designDir, 'thumbnail' + path.extname(thumbFile.originalname) || '.png');
+          thumbPath = path.join(designDir, 'thumbnail' + (path.extname(thumbFile.originalname) || '.png'));
           fs.renameSync(thumbFile.path, thumbPath);
         }
 
@@ -246,6 +246,7 @@ router.delete('/:id', requirePermission('admin'), (req, res) => {
   if (!d) return res.status(404).json({ error: 'التصميم غير موجود' });
   if (!canAccessDesign(req, d.Design_ID)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا التصميم' });
   try { fs.rmSync(path.join(STORAGE, path.dirname(d.FilePath)), { recursive: true, force: true }); } catch {}
+  db.run("UPDATE Agent_Images SET Design_ID=NULL WHERE Design_ID=?", [req.params.id]);
   db.run("DELETE FROM Designs WHERE Design_ID=?", [req.params.id]);
   res.json({ success: true });
 });
@@ -368,8 +369,14 @@ router.post('/:id/add-to-order', requirePermission('orders'), async (req, res) =
           if (!des) designerId = req.session.userId;
         }
         const machineType = (req.body.Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
-        const res2 = db.run("INSERT INTO Orders (Client_ID, Designer_ID, Machine_Type, Status, Notes) VALUES (?, ?, ?, 'قيد التصميم', ?)",
-          [c.Client_ID, designerId, machineType, `إضافة تصميم: ${design.Name}`]);
+        // Agents must go through approval like any other agent order —
+        // never create a directly-approved order from here.
+        const isAgentOrder = req.session.role === 'Agent';
+        const res2 = db.run("INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [c.Client_ID, isAgentOrder ? null : designerId, req.session.userId, machineType,
+           isAgentOrder ? 'بانتظار الموافقة' : 'قيد التصميم',
+           isAgentOrder ? 'pending' : 'approved',
+           `إضافة تصميم: ${design.Name}`]);
         order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [res2.lastId]);
         if (order) order.Task_ID = res2.lastId;
       }
@@ -384,8 +391,8 @@ router.post('/:id/add-to-order', requirePermission('orders'), async (req, res) =
     const taskDir = path.join(monthDir, `Task_${order.Task_ID}`);
     if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
 
-    const srcPath = path.join(STORAGE, design.FilePath);
-    if (!fs.existsSync(srcPath)) return res.status(404).json({ error: 'ملف التصميم غير موجود على القرص' });
+    const srcPath = getDesignFilePath(design);
+    if (!srcPath || !fs.existsSync(srcPath)) return res.status(404).json({ error: 'ملف التصميم غير موجود على القرص' });
     const buffer = fs.readFileSync(srcPath);
 
     const storedName = `TaskID_${order.Task_ID}_${design.Original_Name}`;
@@ -415,7 +422,11 @@ router.post('/:id/add-to-order', requirePermission('orders'), async (req, res) =
     const ins = db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, GDrive_File_ID, File_Size, Label, File_Type, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, ?, 'design', ?)",
       [order.Task_ID, design.Original_Name, storedName, filePath, gdriveFileId, buffer.length, `${design.Name}${design.Notes ? ' - ' + design.Notes : ''}`, req.session.userId]);
 
-    db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [filePath, design.Original_Name, order.Task_ID]);
+    if (order.Status === 'قيد التصميم') {
+      db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [filePath, design.Original_Name, order.Task_ID]);
+    } else {
+      db.run("UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [filePath, design.Original_Name, order.Task_ID]);
+    }
     db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)", [order.Task_ID, `أُضيف التصميم «${design.Name}» إلى الطلب #${order.Task_ID}`, 'info']);
 
     const updated = db.get(`SELECT o.*, c.Full_Name as Client_Name, c.Phone_Number, i.Material_Name, i.Thickness

@@ -24,8 +24,10 @@ function canAccessOrder(req, order) {
   if (req.session.role === 'Admin') return true;
   if (req.session.role === 'Custom') return hasPermission(req, 'orders');
   if (req.session.role === 'Designer') return Number(order.Designer_ID) === Number(req.session.userId);
-  if (req.session.role === 'Laser_Op') return order.Machine_Type === 'Laser';
-  if (req.session.role === 'Router_Op') return order.Machine_Type === 'Router';
+  // Machine operators only see approved orders — pending-approval orders
+  // must not reach production before admin/designer approval.
+  if (req.session.role === 'Laser_Op') return order.Machine_Type === 'Laser' && order.Approval_Status !== 'pending';
+  if (req.session.role === 'Router_Op') return order.Machine_Type === 'Router' && order.Approval_Status !== 'pending';
   if (req.session.role === 'Agent') return Number(order.Created_By) === Number(req.session.userId);
   return false;
 }
@@ -35,8 +37,8 @@ function orderScope(req, alias = 'o') {
     return { sql: '1=1', params: [] };
   }
   if (req.session.role === 'Designer') return { sql: `${alias}.Designer_ID = ?`, params: [req.session.userId] };
-  if (req.session.role === 'Laser_Op') return { sql: `${alias}.Machine_Type = 'Laser'`, params: [] };
-  if (req.session.role === 'Router_Op') return { sql: `${alias}.Machine_Type = 'Router'`, params: [] };
+  if (req.session.role === 'Laser_Op') return { sql: `${alias}.Machine_Type = 'Laser' AND ${alias}.Approval_Status != 'pending'`, params: [] };
+  if (req.session.role === 'Router_Op') return { sql: `${alias}.Machine_Type = 'Router' AND ${alias}.Approval_Status != 'pending'`, params: [] };
   if (req.session.role === 'Agent') return { sql: `${alias}.Created_By = ?`, params: [req.session.userId] };
   return { sql: '1=0', params: [] };
 }
