@@ -1068,6 +1068,33 @@ router.put('/admin/custom-requests/:id/status', requireAuth(['Admin']), (req, re
         db.run("UPDATE Agent_Custom_Designs SET Order_ID = ? WHERE Custom_Design_ID = ?", [orderId, req.params.id]);
       }
 
+      // Copy the custom request attachments into Order_Files so the order
+      // actually carries its files (this is what the "agent custom orders"
+      // list displays). Image_Path holds one path or a JSON array of paths.
+      try {
+        let storedPaths = [];
+        const rawPath = request.Image_Path;
+        if (rawPath) {
+          try {
+            const parsed = JSON.parse(rawPath);
+            storedPaths = Array.isArray(parsed) ? parsed : [rawPath];
+          } catch {
+            storedPaths = [rawPath];
+          }
+        }
+        storedPaths.forEach((fp) => {
+          if (!fp || typeof fp !== 'string') return;
+          let size = 0;
+          try { if (fs.existsSync(fp)) size = fs.statSync(fp).size; } catch {}
+          const base = path.basename(fp);
+          db.run(
+            `INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, File_Type, Upload_Type, Uploaded_By)
+             VALUES (?, ?, ?, ?, ?, 'image', 'agent_custom', ?)`,
+            [orderId, `${request.Name} — ${base}`, base, fp, size, request.Agent_ID]
+          );
+        });
+      } catch (e) { console.error('Copy custom files to order failed:', e.message); }
+
       db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
         [orderId, `طلب تصميم مخصص جديد بانتظارك (#${orderId})`, 'info']);
       const orderRow = db.get("SELECT * FROM Orders WHERE Task_ID = ?", [orderId]);
@@ -1111,9 +1138,9 @@ router.get('/admin/agent-custom-orders', requireAuth(['Admin']), (req, res) => {
       WHERE of.Upload_Type = 'agent_custom'
       ORDER BY of.Created_At DESC
       LIMIT ? OFFSET ?
-    `, [50, 0]);
-    
-    res.json({ files, total: countRow.total });
+    `, [limit, offset]);
+
+    res.json({ files, total: countRow.total, page, pages: Math.ceil(countRow.total / limit) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
