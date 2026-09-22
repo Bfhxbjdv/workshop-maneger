@@ -300,6 +300,46 @@
       </div>
     </div>
 
+  <!-- Approve Custom Request Modal -->
+  <div class="modal fade" id="approveCustomModal" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header bg-success text-white"><h5><i class="bi bi-check-lg"></i> الموافقة وبدء التنفيذ</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <form id="approveCustomForm">
+          <div class="modal-body">
+            <input type="hidden" id="approveCustomId">
+            <div class="mb-2">
+              <label class="form-label">المصمم الذي سيستلم الطلب <span class="text-danger">*</span></label>
+              <select id="approveDesignerSelect" class="form-select" required>
+                <option value="">-- اختر المصمم --</option>
+              </select>
+            </div>
+            <div id="approveOrderFields" style="display:none;">
+              <div class="alert alert-info small">هذا الطلب غير مرتبط بطلب — سيتم إنشاء طلب حقيقي يظهر للرسام فور الموافقة.</div>
+              <div class="mb-2">
+                <label class="form-label">العميل <span class="text-danger">*</span></label>
+                <select id="approveClientSelect" class="form-select">
+                  <option value="">-- اختر العميل --</option>
+                </select>
+              </div>
+              <div class="mb-2">
+                <label class="form-label">نوع الماكينة <span class="text-danger">*</span></label>
+                <select id="approveMachineSelect" class="form-select">
+                  <option value="Laser">ليزر (Laser)</option>
+                  <option value="Router">راوتر (Router)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+            <button type="submit" class="btn btn-success"><i class="bi bi-check-lg"></i> موافقة وبدء التنفيذ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <div class="modal fade" id="expenseModal" tabindex="-1">
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -647,21 +687,91 @@
           <td><span class="badge ${statusBadges[r.Status] || 'bg-secondary'}">${r.Status}</span></td>
           <td>${r.Designer_ID ? 'مصمم #' + r.Designer_ID : '-'}</td>
           <td><small>${new Date(r.Created_At).toLocaleDateString('ar-SA')}</small></td>
-          <td>
-            <button class="btn btn-sm btn-outline-primary" onclick="updateCustomRequestStatus(${r.Custom_Design_ID})"><i class="bi bi-pencil"></i></button>
+          <td class="text-nowrap">
+            ${r.Status === 'pending' ? `<button class="btn btn-sm btn-success" onclick="openApproveCustomModal(${r.Custom_Design_ID}, ${r.Order_ID || 'null'})"><i class="bi bi-check-lg"></i> موافقة وبدء التنفيذ</button>` : ''}
+            ${r.Status === 'in_progress' ? `<button class="btn btn-sm btn-outline-success" onclick="setCustomRequestStatus(${r.Custom_Design_ID}, 'completed')"><i class="bi bi-flag"></i> إتمام</button>` : ''}
+            ${r.Status !== 'cancelled' && r.Status !== 'completed' ? `<button class="btn btn-sm btn-outline-danger" onclick="cancelCustomRequest(${r.Custom_Design_ID})"><i class="bi bi-x-lg"></i> إلغاء</button>` : ''}
           </td>
         `;
         tbody.appendChild(tr);
       });
     }
 
-    function updateCustomRequestStatus(id) {
-      const status = prompt('الحالة الجديدة (pending/in_progress/completed/cancelled):');
-      if (!status) return;
-      const designer_id = prompt('معرف المصمم (اختياري):');
-      fetch(`/api/agents/admin/custom-requests/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ status, designer_id: designer_id || null }) })
-        .then(r => r.json()).then(data => { if (data.success) loadCustomRequests(); else alert(data.error || 'فشل التحديث'); });
+    async function setCustomRequestStatus(id, status, extra = {}) {
+      const res = await fetch(`/api/agents/admin/custom-requests/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ status, ...extra }) });
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      if (res.ok && data && data.success) { loadCustomRequests(); }
+      else { alert((data && data.error) || `فشل التحديث (رمز ${res.status})`); }
     }
+
+    function cancelCustomRequest(id) {
+      const reason = prompt('سبب الإلغاء (اختياري):') || '';
+      if (reason === null) return;
+      setCustomRequestStatus(id, 'cancelled', { notes: reason });
+    }
+
+    async function openApproveCustomModal(id, orderId) {
+      document.getElementById('approveCustomId').value = id;
+      document.getElementById('approveOrderFields').style.display = orderId ? 'none' : 'block';
+      // Load designers
+      const dsel = document.getElementById('approveDesignerSelect');
+      dsel.innerHTML = '<option value="">-- اختر المصمم --</option>';
+      try {
+        const users = await fetch('/api/users', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+        (Array.isArray(users) ? users : []).filter(u => u.Role === 'Designer').forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.User_ID;
+          opt.textContent = `${u.Name} (@${u.Username})`;
+          dsel.appendChild(opt);
+        });
+      } catch (e) { console.error(e); }
+      // Load clients only when no linked order
+      const csel = document.getElementById('approveClientSelect');
+      csel.innerHTML = '<option value="">-- اختر العميل --</option>';
+      if (!orderId) {
+        try {
+          const clients = await fetch('/api/clients/all?search=', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+          (Array.isArray(clients) ? clients : []).forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.Client_ID;
+            opt.textContent = `${c.Full_Name}${c.Phone_Number ? ' - ' + c.Phone_Number : ''}`;
+            csel.appendChild(opt);
+          });
+        } catch (e) { console.error(e); }
+      }
+      new bootstrap.Modal(document.getElementById('approveCustomModal')).show();
+    }
+
+    document.getElementById('approveCustomForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const id = document.getElementById('approveCustomId').value;
+      const designer_id = document.getElementById('approveDesignerSelect').value;
+      if (!designer_id) { alert('اختر المصمم أولاً'); return; }
+      const orderFieldsVisible = document.getElementById('approveOrderFields').style.display !== 'none';
+      const payload = { status: 'in_progress', designer_id: parseInt(designer_id, 10) };
+      if (orderFieldsVisible) {
+        const client_id = document.getElementById('approveClientSelect').value;
+        if (!client_id) { alert('اختر العميل أولاً'); return; }
+        payload.client_id = parseInt(client_id, 10);
+        payload.machine_type = document.getElementById('approveMachineSelect').value;
+      }
+      const btn = e.target.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      try {
+        const res = await fetch(`/api/agents/admin/custom-requests/${id}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(payload) });
+        let data = null;
+        try { data = await res.json(); } catch { data = null; }
+        if (res.ok && data && data.success) {
+          bootstrap.Modal.getInstance(document.getElementById('approveCustomModal')).hide();
+          loadCustomRequests();
+          alert(data.order_id ? `✅ تمت الموافقة — الطلب #${data.order_id} ظهر الآن عند الرسام` : '✅ تمت الموافقة');
+        } else {
+          alert((data && data.error) || `فشل التحديث (رمز ${res.status})`);
+        }
+      } catch (err) { console.error(err); alert('خطأ في الاتصال'); }
+      finally { btn.disabled = false; }
+    });
 
     // ============ AGENT CUSTOM ORDERS ============
     let agentCustomPage = 1;

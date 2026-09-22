@@ -1015,30 +1015,77 @@ router.get('/admin/custom-requests', requireAuth(['Admin']), (req, res) => {
   }
 });
 
-// Update custom design request status
+// Update custom design request status.
+// Approving (in_progress) turns the custom request into a REAL order so it
+// appears immediately for the designer like any other order.
 router.put('/admin/custom-requests/:id/status', requireAuth(['Admin']), (req, res) => {
   try {
-    const { status, designer_id, notes } = req.body;
+    const { status, designer_id, notes, client_id, machine_type } = req.body;
     const validStatuses = ['pending', 'in_progress', 'completed', 'cancelled'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: 'حالة غير صالحة' });
     }
-    
+
     const request = db.get("SELECT * FROM Agent_Custom_Designs WHERE Custom_Design_ID = ?", [req.params.id]);
     if (!request) return res.status(404).json({ error: 'الطلب غير موجود' });
-    
+
+    let orderId = request.Order_ID || null;
+
+    if (status === 'in_progress') {
+      const designerId = designer_id ? parseInt(designer_id, 10) : null;
+      if (!designerId) {
+        return res.status(400).json({ error: 'اختر المصمم الذي سيستلم الطلب' });
+      }
+      const designer = db.get("SELECT User_ID FROM Users WHERE User_ID = ? AND Role = 'Designer'", [designerId]);
+      if (!designer) return res.status(400).json({ error: 'المصمم المختار غير موجود' });
+
+      if (orderId) {
+        const linked = db.get("SELECT * FROM Orders WHERE Task_ID = ?", [orderId]);
+        if (!linked) return res.status(400).json({ error: 'الطلب المرتبط غير موجود' });
+        // Only reset to design phase if it never started; never move a started order backwards.
+        if (linked.Status === 'بانتظار الموافقة') {
+          db.run("UPDATE Orders SET Status = 'قيد التصميم', Updated_At = CURRENT_TIMESTAMP WHERE Task_ID = ?", [orderId]);
+        }
+        db.run("UPDATE Orders SET Approval_Status = 'approved', Designer_ID = ?, Updated_At = CURRENT_TIMESTAMP WHERE Task_ID = ?",
+          [designerId, orderId]);
+      } else {
+        // No linked order: create a real one so the designer sees it at once.
+        const clientId = client_id ? parseInt(client_id, 10) : null;
+        if (!clientId) {
+          return res.status(400).json({ error: 'اختر العميل لإنشاء طلب التصميم' });
+        }
+        const client = db.get("SELECT Client_ID FROM Clients WHERE Client_ID = ?", [clientId]);
+        if (!client) return res.status(400).json({ error: 'العميل المختار غير موجود' });
+        const machineType = String(machine_type || '').toLowerCase() === 'router' ? 'Router' : 'Laser';
+        const created = db.run(
+          `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes)
+           VALUES (?, ?, ?, ?, 'قيد التصميم', 'approved', ?)`,
+          [clientId, designerId, request.Agent_ID, machineType,
+           `[تصميم مخصص] ${request.Name}${request.Description ? ' — ' + request.Description : ''}`]
+        );
+        if (!created.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
+        orderId = created.lastId;
+        db.run("UPDATE Agent_Custom_Designs SET Order_ID = ? WHERE Custom_Design_ID = ?", [orderId, req.params.id]);
+      }
+
+      db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
+        [orderId, `طلب تصميم مخصص جديد بانتظارك (#${orderId})`, 'info']);
+      const orderRow = db.get("SELECT * FROM Orders WHERE Task_ID = ?", [orderId]);
+      if (global.io && orderRow) global.io.emit('order-update', orderRow);
+    }
+
     db.run(
       `UPDATE Agent_Custom_Designs SET Status = ?, Designer_ID = ?, Notes = COALESCE(?, Notes), Updated_At = CURRENT_TIMESTAMP WHERE Custom_Design_ID = ?`,
-      [status, designer_id || null, notes || null, req.params.id]
+      [status, designer_id ? parseInt(designer_id, 10) : null, notes || null, req.params.id]
     );
-    
-    logActivity(request.Agent_ID, `custom_design_${status}`, 'custom_design', req.params.id, { status, designer_id }, req);
-    
-    // Notify agent
+
+    logActivity(request.Agent_ID, `custom_design_${status}`, 'custom_design', req.params.id, { status, designer_id, orderId }, req);
+
+    // Notify agent (Task_ID must be NULL when unlinked to satisfy FK)
     db.run("INSERT INTO Notifications (Task_ID, Message, Type) VALUES (?, ?, ?)",
-      [request.Order_ID || 0, `تم تحديث طلب التصميم المخصص: ${status}`, 'info']);
-    
-    res.json({ success: true });
+      [orderId, `تم تحديث طلب التصميم المخصص: ${status}`, 'info']);
+
+    res.json({ success: true, order_id: orderId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
