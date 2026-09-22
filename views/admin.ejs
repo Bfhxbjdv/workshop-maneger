@@ -314,11 +314,12 @@
               <label class="form-label">الصور (يمكن اختيار عدة ملفات)</label>
               <input type="file" id="uploadImageFiles" name="images" class="form-control" accept="image/*" multiple required>
             </div>
-          </form>
-        </div>
-        <div class="modal-footer">
+          </div>
+          <div class="modal-footer">
           <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-          <button class="btn btn-success" onclick="uploadAdminImages()"><i class="bi bi-cloud-upload"></i> رفع</button>
+          <button type="button" class="btn btn-success" onclick="uploadAdminImages()"><i class="bi bi-cloud-upload"></i> رفع</button>
+          </div>
+        </form>
         </div>
       </div>
     </div>
@@ -651,7 +652,14 @@
 
     async function uploadAdminImages() {
       const form = document.getElementById('uploadImageForm');
-      const formData = new FormData(form);
+      const files = Array.from(document.getElementById('uploadImageFiles').files || []);
+      if (!files.length) {
+        alert('الرجاء اختيار صورة واحدة على الأقل');
+        return;
+      }
+      const formData = new FormData();
+      formData.append('category', document.getElementById('uploadImageCategory').value);
+      files.forEach(file => formData.append('images', file, file.name));
       try {
         const res = await fetch('/api/orders/agent/images', { method: 'POST', body: formData });
         const data = await res.json();
@@ -994,20 +1002,6 @@
     loadAdminStats();
     refreshPendingBadge();
 
-    // Upload images handler
-    async function uploadAdminImages() {
-      const form = document.getElementById('uploadImageForm');
-      const formData = new FormData(form);
-      try {
-        const res = await fetch('/api/orders/agent/images', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.success) {
-          bootstrap.Modal.getInstance(document.getElementById('uploadImageModal')).hide();
-          form.reset();
-          loadLibraryImages();
-        } else { alert(data.error || 'فشل الرفع'); }
-      } catch (e) { alert('خطأ في الرفع'); }
-    }
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
 </body>
