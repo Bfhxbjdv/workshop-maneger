@@ -502,6 +502,11 @@ async function initDatabase() {
         Price REAL DEFAULT 0,
         Cost REAL DEFAULT 0,
         Profit REAL DEFAULT 0,
+        Agent_Price REAL DEFAULT 0,
+        Agent_Commission REAL DEFAULT 0,
+        Final_Price REAL DEFAULT 0,
+        Agent_Approved_At DATETIME,
+        Agent_Approved_By INTEGER REFERENCES Users(User_ID),
         File_Path TEXT,
         File_Name TEXT,
         Notes TEXT,
@@ -513,9 +518,9 @@ async function initDatabase() {
         FOREIGN KEY (Material_ID) REFERENCES Inventory(Material_ID)
       )`);
       orders.forEach(o => {
-        db.run(`INSERT INTO Orders_backup (Task_ID, Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Material_ID, Material_Qty, Price, Cost, Profit, File_Path, File_Name, Notes, Created_At, Updated_At)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [o.Task_ID, o.Client_ID, o.Designer_ID, o.Created_By, o.Machine_Type, o.Status, o.Approval_Status || 'approved', o.Material_ID, o.Material_Qty, o.Price, o.Cost, o.Profit, o.File_Path, o.File_Name, o.Notes, o.Created_At, o.Updated_At]);
+        db.run(`INSERT INTO Orders_backup (Task_ID, Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Material_ID, Material_Qty, Price, Cost, Profit, Agent_Price, Agent_Commission, Final_Price, Agent_Approved_At, Agent_Approved_By, File_Path, File_Name, Notes, Created_At, Updated_At)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [o.Task_ID, o.Client_ID, o.Designer_ID, o.Created_By, o.Machine_Type, o.Status, o.Approval_Status || 'approved', o.Material_ID, o.Material_Qty, o.Price, o.Cost, o.Profit, o.Agent_Price || 0, o.Agent_Commission || 0, o.Final_Price || 0, o.Agent_Approved_At || null, o.Agent_Approved_By || null, o.File_Path, o.File_Name, o.Notes, o.Created_At, o.Updated_At]);
       });
       db.exec("DROP TABLE Orders");
       db.exec("ALTER TABLE Orders_backup RENAME TO Orders");
