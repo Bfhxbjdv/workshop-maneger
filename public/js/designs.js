@@ -102,6 +102,7 @@ function renderDesigns() {
 
   empty.classList.toggle('d-none', list.length > 0);
   grid.innerHTML = list.map(d => designCard(d)).join('');
+  renderMissingCardPreviews(list);
   if (list.length === 0) grid.innerHTML = '';
 }
 
@@ -114,8 +115,8 @@ function designCard(d) {
     <div class="card design-card h-100" data-design-card data-design-id="${d.Design_ID}">
       <div class="position-relative">
         <span class="badge bg-dark badge-ext">${ext}</span>
-        <div class="design-thumb">
-          ${hasThumb ? `<img src="/api/designs/${d.Design_ID}/thumbnail" alt="${d.Name}">` : `<i class="bi bi-file-earmark-image placeholder"></i>`}
+        <div class="design-thumb" data-design-preview="${d.Design_ID}">
+          ${hasThumb ? `<img src="/api/designs/${d.Design_ID}/thumbnail" alt="${d.Name}">` : `<span class="placeholder-preview"><i class="bi bi-file-earmark-${ext === 'CDR' ? 'richtext' : 'image'} placeholder"></i><small class="d-block text-muted">${ext}</small></span>`}
         </div>
         <div class="lock-badge d-flex gap-1">
           ${d.PasswordProtected ? `<span class="badge bg-warning"><i class="bi bi-lock-fill"></i></span>` : ''}
@@ -132,6 +133,40 @@ function designCard(d) {
       </div>
     </div>
   </div>`;
+}
+
+// Older records may have been saved before automatic thumbnails existed.
+// Render DXF/PLT directly in their card; for CDR, use its embedded bitmap
+// preview when CorelDRAW includes one. This keeps the file content visible
+// before downloading whenever a browser-readable preview is available.
+async function renderMissingCardPreviews(designs) {
+  for (const d of designs) {
+    if (d.ThumbnailPath) continue;
+    const ext = extOf(d);
+    if (!['dxf', 'plt', 'cdr'].includes(ext)) continue;
+    const host = document.querySelector(`[data-design-preview="${d.Design_ID}"]`);
+    if (!host) continue;
+    try {
+      const res = await fetch(`/api/designs/${d.Design_ID}/file`, { cache: 'no-store', credentials: 'same-origin' });
+      if (!res.ok) continue;
+      if (ext === 'dxf' || ext === 'plt') {
+        const canvas = document.createElement('canvas');
+        canvas.width = 360; canvas.height = 180;
+        canvas.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#fff';
+        host.replaceChildren(canvas);
+        const source = await res.text();
+        if (ext === 'dxf') drawDxf(canvas, source); else drawPlt(canvas, source);
+      } else {
+        const preview = extractEmbeddedCdrPreview(await res.arrayBuffer());
+        if (!preview) continue;
+        const image = document.createElement('img');
+        const url = URL.createObjectURL(preview);
+        image.src = url; image.alt = d.Name;
+        image.onload = () => URL.revokeObjectURL(url);
+        host.replaceChildren(image);
+      }
+    } catch {}
+  }
 }
 
 // ===================== UPLOAD (single) =====================
@@ -223,8 +258,42 @@ function generateAutoThumbnail(file) {
       fr.readAsText(file);
       return;
     }
+    if (ext === 'cdr') {
+      const fr = new FileReader();
+      fr.onload = () => {
+        const preview = extractEmbeddedCdrPreview(fr.result);
+        const extension = preview?.type === 'image/jpeg' ? 'jpg' : 'png';
+        resolve(preview ? new File([preview], `auto_thumb.${extension}`, { type: preview.type || 'image/png' }) : null);
+      };
+      fr.onerror = () => resolve(null);
+      fr.readAsArrayBuffer(file);
+      return;
+    }
     resolve(null);
   });
+}
+
+function extractEmbeddedCdrPreview(buffer) {
+  const bytes = new Uint8Array(buffer);
+  // CDR files frequently keep a PNG or JPEG display preview in a RIFF chunk.
+  // Extract only a complete raster image; never execute or interpret CDR data.
+  for (let start = 0; start + 8 < bytes.length; start++) {
+    const isPng = bytes[start] === 0x89 && bytes[start + 1] === 0x50 && bytes[start + 2] === 0x4e && bytes[start + 3] === 0x47;
+    if (isPng) {
+      for (let end = start + 8; end + 8 < bytes.length; end++) {
+        if (bytes[end] === 0x49 && bytes[end + 1] === 0x45 && bytes[end + 2] === 0x4e && bytes[end + 3] === 0x44 && bytes[end + 4] === 0xae && bytes[end + 5] === 0x42 && bytes[end + 6] === 0x60 && bytes[end + 7] === 0x82) {
+          return new Blob([bytes.slice(start, end + 8)], { type: 'image/png' });
+        }
+      }
+    }
+    const isJpeg = bytes[start] === 0xff && bytes[start + 1] === 0xd8 && bytes[start + 2] === 0xff;
+    if (isJpeg) {
+      for (let end = start + 3; end + 1 < bytes.length; end++) {
+        if (bytes[end] === 0xff && bytes[end + 1] === 0xd9) return new Blob([bytes.slice(start, end + 2)], { type: 'image/jpeg' });
+      }
+    }
+  }
+  return null;
 }
 
 // ===================== BATCH UPLOAD =====================
@@ -593,6 +662,18 @@ async function loadViewFile(d) {
       const headTrim = head.replace(/^\uFEFF/, '').trimStart();
       const lower = headTrim.toLowerCase();
 
+      if (ext === 'cdr') {
+        const cdrPreview = extractEmbeddedCdrPreview(buf);
+        if (cdrPreview) {
+          viewerObjectUrl = URL.createObjectURL(cdrPreview);
+          placeholder.classList.remove('d-none');
+          const img = document.getElementById('viewThumbImg');
+          img.onload = () => { img.style.display = ''; };
+          img.onerror = () => { img.style.display = 'none'; };
+          img.src = viewerObjectUrl;
+          return;
+        }
+      }
       if (lower.startsWith('%pdf') || headTrim.startsWith('%PDF-')) {
         // AI often saved as PDF-compatible
         const blob = new Blob([buf], { type: 'application/pdf' });

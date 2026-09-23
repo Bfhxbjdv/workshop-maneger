@@ -167,3 +167,11 @@ test('uploading an approved order file moves it to the machine-ready queue', () 
   assert.match(designs, /function shouldSendToMachine\(order\)/);
   assert.match(designs, /if \(shouldSendToMachine\(order\)\)/);
 });
+
+test('ready-design cards generate correct previews for DXF, PLT and embedded CDR images', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'designs.js'), 'utf8');
+  assert.match(script, /renderMissingCardPreviews/);
+  assert.match(script, /drawDxf\(canvas, source\)/);
+  assert.match(script, /drawPlt\(canvas, source\)/);
+  assert.match(script, /extractEmbeddedCdrPreview/);
+});
