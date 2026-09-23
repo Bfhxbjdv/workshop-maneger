@@ -289,7 +289,7 @@
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header bg-primary text-white"><h5><i class="bi bi-plus"></i> إضافة/تعديل تصميم</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-        <form id="designForm">
+        <form id="designForm" enctype="multipart/form-data">
           <div class="modal-body">
             <input type="hidden" id="designId">
             <div class="row g-2">
@@ -301,9 +301,8 @@
               <div class="col-md-6"><label class="form-label">الارتفاع</label><input type="number" id="designHeight" class="form-control" step="0.1" placeholder="الارتفاع بالمم"></div>
               <div class="col-md-6"><label class="form-label">الوحدة</label><input type="text" id="designUnit" class="form-control" value="مم"></div>
               <div class="col-12"><label class="form-label">الوصف</label><textarea id="designNotes" class="form-control" rows="2"></textarea></div>
-              <div class="col-md-6"><label class="form-label">ملف التصميم <span class="text-danger">*</span></label><input type="text" id="designFilePath" class="form-control" placeholder="مسار الملف في التخزين" required></div>
-              <div class="col-md-6"><label class="form-label">الاسم الأصلي للملف</label><input type="text" id="designOriginalName" class="form-control"></div>
-              <div class="col-md-6"><label class="form-label">مسار الصورة المصغرة</label><input type="text" id="designThumbnail" class="form-control"></div>
+              <div class="col-md-6"><label class="form-label">ملف التصميم <span class="text-danger">*</span></label><input type="file" id="designFile" class="form-control" accept=".dxf,.plt,.svg,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.ai,.eps,.cdr,.txt" required><div class="form-text">اختر الملف من الكمبيوتر — حتى 25 ميغابايت.</div></div>
+              <div class="col-md-6"><label class="form-label">صورة مصغرة (اختيارية)</label><input type="file" id="designThumbnail" class="form-control" accept="image/*"></div>
               <div class="col-md-6"><label class="form-label">كلمة مرور (اختياري)</label><input type="password" id="designPassword" class="form-control"></div>
             </div>
           </div>
@@ -868,6 +867,36 @@
         .then(r => r.json()).then(data => { if (data.success) loadDesigns(); else alert(data.error || 'فشل الحذف'); });
     }
 
+    async function saveReadyDesign(event) {
+      event.preventDefault();
+      const file = document.getElementById('designFile').files[0];
+      const name = document.getElementById('designName').value.trim();
+      if (!name || !file) return alert('اكتب اسم التصميم واختر ملفه من الكمبيوتر');
+      if (file.size > 25 * 1024 * 1024) return alert('حجم ملف التصميم يتجاوز 25 ميغابايت');
+      const formData = new FormData();
+      formData.append('Name', name);
+      ['Category', 'Material', 'Thickness', 'Width', 'Height', 'Unit', 'Notes', 'Password'].forEach(field => {
+        const element = document.getElementById('design' + field);
+        if (element) formData.append(field, element.value);
+      });
+      formData.append('file', file, file.name);
+      const thumbnail = document.getElementById('designThumbnail').files[0];
+      if (thumbnail) formData.append('thumbnail', thumbnail, thumbnail.name);
+      const submit = event.currentTarget.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      submit.textContent = 'جارٍ رفع التصميم...';
+      try {
+        const response = await fetch('/api/designs', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: formData });
+        const data = await response.json();
+        if (!response.ok || !data.success) return alert(data.error || 'تعذر رفع التصميم');
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('designModal')).hide();
+        event.currentTarget.reset();
+        document.getElementById('designUnit').value = 'مم';
+        loadDesigns();
+      } catch (error) { console.error(error); alert('تعذر رفع التصميم. تحقق من الاتصال وحاول مجددًا'); }
+      finally { submit.disabled = false; submit.innerHTML = '<i class="bi bi-check-lg"></i> حفظ ورفع التصميم'; }
+    }
+
     // ============ CUSTOM REQUESTS ============
     let customPage = 1;
     const debouncedCustomSearch = debounce(() => loadCustomRequests(), 300);
@@ -1143,6 +1172,7 @@
     document.getElementById('uploadAdminImagesButton').addEventListener('click', uploadAdminImages);
     document.getElementById('uploadImageFiles').addEventListener('change', previewChosenImages);
     document.getElementById('productPricingForm').addEventListener('submit', saveProductPricing);
+    document.getElementById('designForm').addEventListener('submit', saveReadyDesign);
 
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>

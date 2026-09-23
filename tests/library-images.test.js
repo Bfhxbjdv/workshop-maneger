@@ -142,3 +142,14 @@ test('product-material pricing is persisted and wired into admin and agent flows
   assert.match(agent, /allowedMaterials/);
   assert.match(agent, /selectedMaterialId/);
 });
+
+test('ready-design modal uploads a selected local file instead of accepting a storage path', () => {
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'designs.js'), 'utf8');
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'views', 'admin.ejs'), 'utf8');
+  assert.match(routes, /DESIGN_EXTENSIONS/);
+  assert.match(routes, /limits: \{ fileSize: 25 \* 1024 \* 1024/);
+  assert.match(admin, /<input[^>]*type="file"[^>]*id="designFile"/);
+  assert.match(admin, /formData\.append\('file', file, file\.name\)/);
+  assert.match(admin, /fetch\('\/api\/designs', \{ method: 'POST'/);
+  assert.doesNotMatch(admin, /id="designFilePath"/);
+});

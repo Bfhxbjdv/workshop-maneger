@@ -9,7 +9,12 @@ const { requireAuth, requirePermission, canAccessOrder } = require('../middlewar
 
 const STORAGE = path.join(__dirname, '..', 'Designs_Storage');
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
-const upload = multer({ dest: path.join(__dirname, '..', 'uploads') });
+const DESIGN_EXTENSIONS = new Set(['.dxf', '.plt', '.svg', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ai', '.eps', '.cdr', '.txt']);
+const upload = multer({
+  dest: path.join(__dirname, '..', 'uploads'),
+  limits: { fileSize: 25 * 1024 * 1024, files: 2 },
+  fileFilter: (req, file, cb) => cb(null, DESIGN_EXTENSIONS.has(path.extname(file.originalname || '').toLowerCase()))
+});
 
 const MIME_MAP = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
