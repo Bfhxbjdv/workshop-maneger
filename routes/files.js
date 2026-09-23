@@ -8,6 +8,7 @@ const db = require('../database/connection');
 const { requireAuth, requirePermission, canAccessOrder } = require('../middleware/auth');
 const gdrive = require('../services/googleDrive');
 const { resolveLocalFile, imageHeaders } = require('../services/localFiles');
+const r2 = require('../services/cloudflareR2');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
@@ -30,6 +31,11 @@ const imageUpload = multer({
 
 function safeFileName(name) {
   return path.basename(String(name || 'file')).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/^\.+/, '') || 'file';
+}
+
+async function storeInR2(taskId, storedName, localPath, mime, type) {
+  if (!r2.configured) return null;
+  return r2.uploadLocalFile(r2.keyFor(taskId, storedName, type), localPath, mime);
 }
 
 // Uploading a replacement/new production file means the approved order is
@@ -114,7 +120,10 @@ router.post('/upload/:taskId', requirePermission('orders'), designUpload.array('
       let filePath = path.relative(STORAGE, localPath);
       let gdriveFileId = null;
 
-      if (isOnline && gdrive.isConfigured()) {
+      const r2Path = await storeInR2(taskId, storedName, localPath, file.mimetype, 'designs');
+      if (r2Path) {
+        filePath = r2Path;
+      } else if (isOnline && gdrive.isConfigured()) {
         try {
           const buffer = fs.readFileSync(localPath);
           const result = await gdrive.uploadFile(taskId, order.Client_Name, storedName, buffer);
@@ -195,7 +204,10 @@ router.post('/upload-image/:taskId', requirePermission('orders'), imageUpload.ar
       let filePath = path.relative(STORAGE, localPath);
       let gdriveFileId = null;
 
-      if (isOnline && gdrive.isConfigured()) {
+      const r2Path = await storeInR2(taskId, storedName, localPath, imgFile.mimetype, 'images');
+      if (r2Path) {
+        filePath = r2Path;
+      } else if (isOnline && gdrive.isConfigured()) {
         try {
           const buffer = fs.readFileSync(localPath);
           const result = await gdrive.uploadFile(taskId, order.Client_Name, storedName, buffer);
@@ -299,6 +311,13 @@ router.post('/copy/:taskId', requirePermission('orders'), async (req, res) => {
 
 async function getFileBuffer(file) {
   try {
+    if (r2.isR2Path(file.File_Path)) {
+      const stream = await r2.getStream(file.File_Path);
+      if (!stream) return null;
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    }
     if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
       const fileId = file.File_Path.replace('gdrive://', '');
       const stream = await gdrive.downloadFile(fileId);
@@ -341,7 +360,12 @@ router.get('/image/:fileId', requireAuth(), async (req, res) => {
   if (!file) return res.status(404).json({ error: 'الملف غير موجود' });
   if (!canAccessOrder(req, db.get('SELECT * FROM Orders WHERE Task_ID=?', [file.Task_ID]))) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
-  if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
+  if (r2.isR2Path(file.File_Path)) {
+    try {
+      const stream = await r2.getStream(file.File_Path);
+      if (stream) { imageHeaders(res); res.type(path.extname(file.Original_Name)); return stream.pipe(res); }
+    } catch (e) { console.error('R2 image read error:', e.message); }
+  } else if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
     try {
       const fileId = file.File_Path.replace('gdrive://', '');
       const fileStream = await gdrive.downloadFile(fileId);
@@ -370,7 +394,12 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
     archive.pipe(res);
 
     for (const file of files) {
-      if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
+      if (r2.isR2Path(file.File_Path)) {
+        try {
+          const stream = await r2.getStream(file.File_Path);
+          if (stream) archive.append(stream, { name: file.Original_Name });
+        } catch (e) { console.error('ZIP append R2 error:', e.message); }
+      } else if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
         try {
           const fileId = file.File_Path.replace('gdrive://', '');
           const stream = await gdrive.downloadFile(fileId);
@@ -388,7 +417,15 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
 
   if (files && files.length === 1) {
     const file = files[0];
-    if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
+    if (r2.isR2Path(file.File_Path)) {
+      try {
+        const stream = await r2.getStream(file.File_Path);
+        if (stream) {
+          res.setHeader('Content-Disposition', `attachment; filename="${file.Original_Name}"`);
+          return stream.pipe(res);
+        }
+      } catch (e) { console.error('R2 download error:', e.message); }
+    } else if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
       try {
         const fileId = file.File_Path.replace('gdrive://', '');
         const fileStream = await gdrive.downloadFile(fileId);
@@ -406,7 +443,15 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
   }
 
   if (order.File_Path) {
-    if (order.File_Path.startsWith('gdrive://')) {
+    if (r2.isR2Path(order.File_Path)) {
+      try {
+        const stream = await r2.getStream(order.File_Path);
+        if (stream) {
+          res.setHeader('Content-Disposition', `attachment; filename="${order.File_Name || `task_${order.Task_ID}.dxf`}"`);
+          return stream.pipe(res);
+        }
+      } catch (e) { console.error('R2 order download error:', e.message); }
+    } else if (order.File_Path.startsWith('gdrive://')) {
       try {
         const fileId = order.File_Path.replace('gdrive://', '');
         const fileStream = await gdrive.downloadFile(fileId);
@@ -434,7 +479,15 @@ router.get('/download-file/:fileId', requireAuth(), async (req, res) => {
   if (!file) return res.status(404).json({ error: 'الملف غير موجود' });
   if (!canAccessOrder(req, db.get('SELECT * FROM Orders WHERE Task_ID=?', [file.Task_ID]))) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
-  if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
+  if (r2.isR2Path(file.File_Path)) {
+    try {
+      const stream = await r2.getStream(file.File_Path);
+      if (stream) {
+        res.setHeader('Content-Disposition', `attachment; filename="${file.Original_Name}"`);
+        return stream.pipe(res);
+      }
+    } catch (e) { console.error('R2 file download error:', e.message); }
+  } else if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
     try {
       const fileId = file.File_Path.replace('gdrive://', '');
       const fileStream = await gdrive.downloadFile(fileId);
@@ -459,7 +512,9 @@ router.delete('/file/:fileId', requirePermission('orders'), async (req, res) => 
   if (!file) return res.status(404).json({ error: 'الملف غير موجود' });
   if (!canAccessOrder(req, db.get('SELECT * FROM Orders WHERE Task_ID=?', [file.Task_ID]))) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
-  if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
+  if (r2.isR2Path(file.File_Path)) {
+    await r2.remove(file.File_Path);
+  } else if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
     await gdrive.deleteFile(file.File_Path.replace('gdrive://', ''));
   } else if (file.File_Path) {
     const fullPath = path.join(STORAGE, file.File_Path);
@@ -493,7 +548,9 @@ router.delete('/:taskId', requirePermission('orders'), async (req, res) => {
   const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=?", [req.params.taskId]);
   if (files) {
     for (const file of files) {
-      if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
+      if (r2.isR2Path(file.File_Path)) {
+        await r2.remove(file.File_Path);
+      } else if (file.File_Path && file.File_Path.startsWith('gdrive://')) {
         await gdrive.deleteFile(file.File_Path.replace('gdrive://', ''));
       } else if (file.File_Path) {
         const filePath = path.join(STORAGE, file.File_Path);
@@ -504,7 +561,9 @@ router.delete('/:taskId', requirePermission('orders'), async (req, res) => {
   }
 
   if (order.File_Path) {
-    if (order.File_Path.startsWith('gdrive://')) {
+    if (r2.isR2Path(order.File_Path)) {
+      await r2.remove(order.File_Path);
+    } else if (order.File_Path.startsWith('gdrive://')) {
       await gdrive.deleteFile(order.File_Path.replace('gdrive://', ''));
     } else {
       const filePath = path.join(STORAGE, order.File_Path);
