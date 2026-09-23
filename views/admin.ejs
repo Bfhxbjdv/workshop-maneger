@@ -358,6 +358,10 @@
     <div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 id="imageMaterialsTitle">خامات الصورة</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><p class="small text-muted">إذا لم تحدد خامة، تظل الصورة متاحة مع كل خامات المنتج. اختر الخامات لتقييدها.</p><input type="hidden" id="imageMaterialsImageId"><div id="imageMaterialsList"></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button type="button" class="btn btn-primary" onclick="saveImageMaterials()">حفظ الخامات</button></div></div></div>
   </div>
 
+  <div class="modal fade" id="imageDesignLinkModal" tabindex="-1" aria-labelledby="imageDesignLinkTitle" aria-hidden="true">
+    <div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 id="imageDesignLinkTitle">ربط الصورة بتصميم</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="imageDesignLinkImageId"><label for="imageDesignLinkSelect" class="form-label">اختر التصميم</label><select id="imageDesignLinkSelect" class="form-select"><option value="">-- اختر التصميم --</option></select><div class="form-text">سيظهر هذا التصميم للوكلاء عند اختيارهم لهذه الصورة.</div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button type="button" id="saveImageDesignLinkButton" class="btn btn-primary" onclick="saveImageDesignLink()">حفظ الربط</button></div></div></div>
+  </div>
+
   <!-- Approve Custom Request Modal -->
   <div class="modal fade" id="approveCustomModal" tabindex="-1">
     <div class="modal-dialog">
@@ -721,6 +725,40 @@
       loadLibraryImages();
     }
 
+    async function openImageDesignLink(imageId, currentDesignId) {
+      const select = document.getElementById('imageDesignLinkSelect');
+      try {
+        select.innerHTML = '<option value="">جارٍ تحميل التصاميم...</option>';
+        const response = await fetch('/api/designs', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const designs = await response.json();
+        if (!response.ok) throw new Error(designs.error || 'تعذر تحميل التصاميم');
+        select.innerHTML = '<option value="">-- اختر التصميم --</option>' + (Array.isArray(designs) ? designs : []).map(design => `<option value="${design.Design_ID}" ${Number(design.Design_ID) === Number(currentDesignId) ? 'selected' : ''}>${escapeImageText(design.Name)}</option>`).join('');
+        document.getElementById('imageDesignLinkImageId').value = imageId;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('imageDesignLinkModal')).show();
+      } catch (error) {
+        alert(error.message || 'تعذر تحميل التصاميم');
+      }
+    }
+
+    async function saveImageDesignLink() {
+      const imageId = document.getElementById('imageDesignLinkImageId').value;
+      const designId = document.getElementById('imageDesignLinkSelect').value;
+      if (!designId) return alert('اختر تصميمًا أولاً');
+      const button = document.getElementById('saveImageDesignLinkButton');
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/orders/agent/images/${imageId}/link-design`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ design_id: Number(designId) }) });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'تعذر حفظ الربط');
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('imageDesignLinkModal')).hide();
+        loadLibraryImages();
+      } catch (error) {
+        alert(error.message || 'تعذر حفظ الربط');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     function renderLibraryImages(images) {
       const grid = document.getElementById('libraryImagesGrid');
       if (!images.length) {
@@ -741,9 +779,10 @@
               <span class="badge bg-secondary">${escapeImageText(img.Category)}</span>
               ${hasDesign}
             </div>
-            <div class="card-footer p-2 d-flex gap-1">
+            <div class="card-footer p-2 d-flex gap-1 flex-wrap">
               <a href="/api/orders/agent/images/${img.Image_ID}/file" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary flex-fill">عرض كامل</a>
               <button class="btn btn-sm btn-outline-success flex-fill" onclick="openImageMaterials(${img.Image_ID})">خامات</button>
+              <button class="btn btn-sm btn-outline-primary flex-fill" onclick="openImageDesignLink(${img.Image_ID}, ${img.Design_ID || 'null'})"><i class="bi bi-link-45deg"></i> ${img.Design_ID ? 'تغيير الربط' : 'ربط بتصميم'}</button>
               ${img.Design_ID ? `<button class="btn btn-sm btn-outline-secondary flex-fill" onclick="unlinkImageFromDesign(${img.Image_ID})"><i class="bi bi-link-45deg"></i> فك الارتباط</button>` : ''}
               <button class="btn btn-sm btn-outline-danger flex-fill" onclick="deleteLibraryImage(${img.Image_ID})"><i class="bi bi-trash"></i> حذف</button>
             </div>

@@ -187,3 +187,11 @@ test('batch design thumbnails stay paired with the right file when names repeat'
   assert.match(script, /thumbIndexes\.push\(i\)/);
   assert.match(script, /fd\.append\('thumbIndexes'/);
 });
+
+test('library image cards provide a design-linking control', () => {
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'views', 'admin.ejs'), 'utf8');
+  assert.match(admin, /ربط بتصميم/);
+  assert.match(admin, /openImageDesignLink/);
+  assert.match(admin, /imageDesignLinkModal/);
+  assert.match(admin, /agent\/images\/\$\{imageId\}\/link-design/);
+});
