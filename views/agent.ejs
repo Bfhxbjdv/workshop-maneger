@@ -67,8 +67,8 @@
               </div>
 
               <div class="mb-3">
-                <label class="form-label fw-bold"><i class="bi bi-grid-1x2"></i> الكميات (باللوح/Sheet) <span class="text-danger">*</span></label>
-                <div class="form-text">أدخل الكمية لكل صورة محددة (باللوح). سيتم إنشاء بند واحد لكل صورة مع كميتها.</div>
+                <label class="form-label fw-bold"><i class="bi bi-grid-1x2"></i> الكميات <span class="text-danger">*</span></label>
+                <div class="form-text" id="quantityHelp">اختر المنتج أولًا لمعرفة ما إذا كانت الكمية باللوح أو بالقطعة.</div>
                 <div id="quantitiesContainer" class="row g-2 mt-2"></div>
               </div>
 
@@ -94,6 +94,13 @@
                   </div>
                 </div>
                 <input type="hidden" id="selectedPricingId" name="Pricing_ID">
+              </div>
+
+              <div class="mb-3" id="materialSelection" style="display:none">
+                <label class="form-label fw-bold"><i class="bi bi-box-seam"></i> الخامة <span class="text-danger">*</span></label>
+                <div class="form-text">تظهر فقط الخامات المتوافقة مع المنتج والصور المختارة.</div>
+                <div id="materialsSelector" class="row g-2 mt-1"></div>
+                <input type="hidden" id="selectedMaterialId" name="Material_ID">
               </div>
 
               <div class="mb-3">
@@ -214,6 +221,7 @@
     let allClients = [];
     let allPricing = [];
     let selectedPricingId = null;
+    let selectedMaterialId = null;
     let clientsLoaded = false;
 
     // Load images
@@ -299,15 +307,74 @@
       });
     }
 
+    function allowedMaterials() {
+      const product = allPricing.find(p => Number(p.Pricing_ID) === Number(selectedPricingId));
+      if (!product) return [];
+      let materials = product.Materials || [];
+      const chosenImages = selectedImageIds.map(id => allImages.find(image => Number(image.Image_ID) === Number(id))).filter(Boolean);
+      const restrictedImages = chosenImages.filter(image => (image.Materials || []).length);
+      if (restrictedImages.length) {
+        const allowedIds = restrictedImages.reduce((ids, image) => {
+          const imageIds = new Set(image.Materials.map(material => Number(material.Material_ID)));
+          return ids === null ? imageIds : new Set([...ids].filter(id => imageIds.has(id)));
+        }, null);
+        materials = materials.filter(material => allowedIds.has(Number(material.Material_ID)));
+      }
+      return materials;
+    }
+
+    function renderMaterials() {
+      const section = document.getElementById('materialSelection');
+      const container = document.getElementById('materialsSelector');
+      const materials = allowedMaterials();
+      section.style.display = selectedPricingId ? 'block' : 'none';
+      container.innerHTML = '';
+      if (!selectedPricingId) return;
+      if (!materials.length) {
+        selectedMaterialId = null;
+        document.getElementById('selectedMaterialId').value = '';
+        container.innerHTML = '<div class="col-12 text-danger small">لا توجد خامة مشتركة متاحة لهذا المنتج والصور المختارة. اطلب من الإدارة ربط الخامات.</div>';
+        updateSubmitButton();
+        return;
+      }
+      if (!materials.some(material => Number(material.Material_ID) === Number(selectedMaterialId))) selectedMaterialId = null;
+      materials.forEach(material => {
+        const col = document.createElement('div');
+        col.className = 'col-12 col-md-6';
+        const selected = Number(material.Material_ID) === Number(selectedMaterialId);
+        col.innerHTML = `<button type="button" class="btn w-100 text-start ${selected ? 'btn-primary' : 'btn-outline-secondary'}">
+          <strong>${escapeImageText(material.Material_Name)}</strong> ${material.Thickness ? `(${escapeImageText(material.Thickness)})` : ''}
+          <span class="d-block small">${Number(material.Price).toLocaleString()} ريال/${escapeImageText(allPricing.find(p => Number(p.Pricing_ID) === Number(selectedPricingId)).Unit)}</span>
+        </button>`;
+        col.querySelector('button').addEventListener('click', () => selectMaterial(material));
+        container.appendChild(col);
+      });
+    }
+
+    function selectMaterial(material) {
+      selectedMaterialId = Number(material.Material_ID);
+      document.getElementById('selectedMaterialId').value = selectedMaterialId;
+      document.getElementById('basePrice').value = Number(material.Price).toLocaleString();
+      renderMaterials();
+      calculateTotal();
+      updateSubmitButton();
+    }
+
     function selectPricing(id, basePrice, card) {
       selectedPricingId = id;
+      selectedMaterialId = null;
       document.getElementById('selectedPricingId').value = id;
+      document.getElementById('selectedMaterialId').value = '';
       document.getElementById('basePrice').value = basePrice.toLocaleString();
       document.getElementById('priceInputs').style.display = 'flex';
       document.getElementById('agentCommission').value = '';
       document.getElementById('finalPrice').value = '';
       document.querySelectorAll('.pricing-card').forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');
+      const product = allPricing.find(p => Number(p.Pricing_ID) === Number(id));
+      document.getElementById('quantityHelp').textContent = `أدخل الكمية لكل صورة بوحدة: ${product.Unit}.`;
+      updateQuantitiesUI();
+      renderMaterials();
       calculateTotal();
       updateSubmitButton();
     }
@@ -344,6 +411,7 @@
       }
       document.getElementById('selectedImages').value = selectedImageIds.join(',');
       updateQuantitiesUI();
+      renderMaterials();
       updateSubmitButton();
       calculateTotal();
     }
@@ -363,6 +431,8 @@
         if (!img) return;
         const col = document.createElement('div');
         col.className = 'col-12 col-md-6';
+        const product = allPricing.find(p => Number(p.Pricing_ID) === Number(selectedPricingId));
+        const unit = product ? product.Unit : 'الوحدة';
         col.innerHTML = `
           <div class="card border-secondary">
             <div class="card-body p-2 d-flex align-items-center gap-2">
@@ -371,7 +441,7 @@
                 <small class="fw-bold">${img.Original_Name}</small>
                 <small class="text-muted d-block">${img.Category}</small>
               </div>
-              <input type="number" class="form-control form-control-sm qty-input" data-image-id="${id}" placeholder="لوح" step="0.1" min="0.1" required>
+              <input type="number" class="form-control form-control-sm qty-input" data-image-id="${id}" placeholder="${escapeImageText(unit)}" step="0.1" min="0.1" required>
             </div>
           </div>
         `;
@@ -387,7 +457,7 @@
       const hasImages = selectedImageIds.length > 0;
       const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
       const hasQtys = hasImages && qtyInputs.length > 0 && qtyInputs.every(i => i.value && parseFloat(i.value) > 0);
-      const hasPricing = !!(selectedPricingId && document.getElementById('agentCommission').value && document.getElementById('finalPrice').value);
+      const hasPricing = !!(selectedPricingId && selectedMaterialId && document.getElementById('agentCommission').value && document.getElementById('finalPrice').value);
       const ok = hasClient && hasImages && hasQtys && hasPricing;
       btn.disabled = !ok;
       if (hint) {
@@ -395,8 +465,8 @@
         const missing = [];
         if (!hasClient) missing.push('اختر العميل');
         if (!hasImages) missing.push('اختر صورة واحدة على الأقل');
-        else if (!hasQtys) missing.push('أدخل الكمية (باللوح) لكل صورة');
-        if (!hasPricing) missing.push('اختر المنتج وأدخل عمولتك');
+        else if (!hasQtys) missing.push('أدخل الكمية لكل صورة');
+        if (!hasPricing) missing.push('اختر المنتج والخامة وأدخل عمولتك');
         hint.textContent = 'متبقٍّ: ' + missing.join('، ');
       }
     }
@@ -530,6 +600,7 @@
         Image_IDs: selectedImageIds,
         Quantities: qtys,
         Pricing_ID: selectedPricingId,
+        Material_ID: selectedMaterialId,
         Agent_Price: basePrice,
         Agent_Commission: agentCommission,
         Final_Price: finalPrice
@@ -550,9 +621,12 @@
           document.getElementById('agentOrderForm').reset();
           selectedImageIds = [];
           selectedPricingId = null;
+          selectedMaterialId = null;
           document.getElementById('selectedImages').value = '';
           document.getElementById('selectedPricingId').value = '';
+          document.getElementById('selectedMaterialId').value = '';
           document.getElementById('priceInputs').style.display = 'none';
+          document.getElementById('materialSelection').style.display = 'none';
           document.getElementById('totalPriceBadge').style.display = 'none';
           document.querySelectorAll('.image-card').forEach(c => c.classList.remove('selected'));
           document.querySelectorAll('.image-card .badge').forEach(b => b.remove());

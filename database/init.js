@@ -211,6 +211,26 @@ async function initDatabase() {
       Updated_At DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS Product_Material_Pricing (
+      ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Pricing_ID INTEGER NOT NULL,
+      Material_ID INTEGER NOT NULL,
+      Price REAL NOT NULL DEFAULT 0,
+      Is_Active INTEGER DEFAULT 1,
+      FOREIGN KEY (Pricing_ID) REFERENCES Product_Pricing(Pricing_ID) ON DELETE CASCADE,
+      FOREIGN KEY (Material_ID) REFERENCES Inventory(Material_ID),
+      UNIQUE(Pricing_ID, Material_ID)
+    );
+
+    CREATE TABLE IF NOT EXISTS Agent_Image_Materials (
+      ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Image_ID INTEGER NOT NULL,
+      Material_ID INTEGER NOT NULL,
+      FOREIGN KEY (Image_ID) REFERENCES Agent_Images(Image_ID) ON DELETE CASCADE,
+      FOREIGN KEY (Material_ID) REFERENCES Inventory(Material_ID),
+      UNIQUE(Image_ID, Material_ID)
+    );
+
     CREATE TABLE IF NOT EXISTS Client_Pricing (
       ID INTEGER PRIMARY KEY AUTOINCREMENT,
       Client_ID INTEGER NOT NULL,
@@ -558,6 +578,31 @@ async function initDatabase() {
     )`);
     console.log('✅ Designs tables ready');
   } catch (e) {}
+
+  // A product can have several material-specific prices, and a library image
+  // can limit the materials available to agents. Kept here as well as above
+  // so established installations receive the feature through migration.
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS Product_Material_Pricing (
+      ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Pricing_ID INTEGER NOT NULL,
+      Material_ID INTEGER NOT NULL,
+      Price REAL NOT NULL DEFAULT 0,
+      Is_Active INTEGER DEFAULT 1,
+      FOREIGN KEY (Pricing_ID) REFERENCES Product_Pricing(Pricing_ID) ON DELETE CASCADE,
+      FOREIGN KEY (Material_ID) REFERENCES Inventory(Material_ID),
+      UNIQUE(Pricing_ID, Material_ID)
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS Agent_Image_Materials (
+      ID INTEGER PRIMARY KEY AUTOINCREMENT,
+      Image_ID INTEGER NOT NULL,
+      Material_ID INTEGER NOT NULL,
+      FOREIGN KEY (Image_ID) REFERENCES Agent_Images(Image_ID) ON DELETE CASCADE,
+      FOREIGN KEY (Material_ID) REFERENCES Inventory(Material_ID),
+      UNIQUE(Image_ID, Material_ID)
+    )`);
+    console.log('✅ Product material pricing tables ready');
+  } catch (e) { console.log('⚠️ Product material pricing migration skipped:', e.message); }
 
   console.log('✅ Database initialized');
 }

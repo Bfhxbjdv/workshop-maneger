@@ -45,6 +45,7 @@
           <a class="nav-link" href="#" data-tab="system"><i class="bi bi-info-circle"></i> معلومات النظام</a>
           <hr>
           <a class="nav-link" href="#" data-tab="library-images"><i class="bi bi-images"></i> صور المكتبة</a>
+          <a class="nav-link" href="#" data-tab="product-pricing"><i class="bi bi-tags"></i> المنتجات والأسعار</a>
           <a class="nav-link" href="#" data-tab="ready-designs"><i class="bi bi-files"></i> التصاميم الجاهزة</a>
           <a class="nav-link" href="#" data-tab="custom-requests"><i class="bi bi-pencil-square"></i> طلبات تصاميم مخصصة</a>
           <a class="nav-link" href="#" data-tab="agent-custom-orders"><i class="bi bi-person-lines-fill"></i> طلبات الوكلاء المخصصة</a>
@@ -161,6 +162,29 @@
             </div>
           </div>
           <div class="row g-2" id="libraryImagesGrid"></div>
+        </div>
+
+        <div class="tab-content d-none" id="tab-product-pricing">
+          <div class="row g-3">
+            <div class="col-lg-4">
+              <div class="card">
+                <div class="card-header bg-primary text-white"><i class="bi bi-plus-circle"></i> إضافة منتج وسعره</div>
+                <form id="productPricingForm">
+                  <div class="card-body">
+                    <div class="mb-2"><label class="form-label">اسم المنتج</label><input id="pricingName" class="form-control" required placeholder="مثال: قص ليزر"></div>
+                    <div class="mb-2"><label class="form-label">الفئة</label><input id="pricingCategory" class="form-control" placeholder="مثال: قص، حفر"></div>
+                    <div class="row g-2"><div class="col-6"><label class="form-label">الوحدة</label><select id="pricingUnit" class="form-select"><option value="لوح">لوح</option><option value="قطعة">قطعة</option></select></div><div class="col-6"><label class="form-label">سعر افتراضي</label><input id="pricingBasePrice" type="number" min="0" step="0.01" class="form-control" value="0"></div></div>
+                    <div class="mb-2 mt-2"><label class="form-label">الوصف</label><textarea id="pricingDescription" class="form-control" rows="2"></textarea></div>
+                    <label class="form-label fw-bold mt-2">الخامات والأسعار الخاصة بها</label>
+                    <div id="pricingMaterials" class="border rounded p-2" style="max-height:260px;overflow:auto"></div>
+                    <div class="form-text">اختر خامة واحدة على الأقل وحدد سعر المنتج معها.</div>
+                  </div>
+                  <div class="card-footer"><button class="btn btn-primary w-100" type="submit">حفظ المنتج</button></div>
+                </form>
+              </div>
+            </div>
+            <div class="col-lg-8"><div class="card"><div class="card-header"><i class="bi bi-list-ul"></i> قائمة الأسعار</div><div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th>المنتج</th><th>الوحدة</th><th>الخامات والأسعار</th><th></th></tr></thead><tbody id="pricingTableBody"></tbody></table></div></div></div></div>
+          </div>
         </div>
 
         <!-- Ready Designs Tab -->
@@ -325,6 +349,10 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="modal fade" id="imageMaterialsModal" tabindex="-1" aria-labelledby="imageMaterialsTitle" aria-hidden="true">
+    <div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 id="imageMaterialsTitle">خامات الصورة</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><p class="small text-muted">إذا لم تحدد خامة، تظل الصورة متاحة مع كل خامات المنتج. اختر الخامات لتقييدها.</p><input type="hidden" id="imageMaterialsImageId"><div id="imageMaterialsList"></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button type="button" class="btn btn-primary" onclick="saveImageMaterials()">حفظ الخامات</button></div></div></div>
   </div>
 
   <!-- Approve Custom Request Modal -->
@@ -627,6 +655,69 @@
       return String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
     }
 
+    let adminMaterials = [];
+    async function loadProductPricing() {
+      const [pricingResponse, materialsResponse] = await Promise.all([
+        fetch('/api/orders/pricing', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }),
+        fetch('/api/inventory', { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      ]);
+      const pricingData = await pricingResponse.json();
+      adminMaterials = await materialsResponse.json();
+      renderPricingMaterials();
+      const body = document.getElementById('pricingTableBody');
+      body.innerHTML = (pricingData.pricing || []).length ? (pricingData.pricing || []).map(product => `
+        <tr><td><strong>${escapeImageText(product.Product_Name)}</strong><small class="d-block text-muted">${escapeImageText(product.Category || '')}</small></td>
+        <td>${escapeImageText(product.Unit)}</td>
+        <td>${(product.Materials || []).length ? product.Materials.map(material => `${escapeImageText(material.Material_Name)} ${material.Thickness ? `(${escapeImageText(material.Thickness)})` : ''}: <strong>${Number(material.Price).toLocaleString()}</strong>`).join('<br>') : `<span class="text-muted">السعر الافتراضي: ${Number(product.Base_Price).toLocaleString()}</span>`}</td>
+        <td><button class="btn btn-sm btn-outline-danger" onclick="deleteProductPricing(${product.Pricing_ID})">حذف</button></td></tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted py-4">لا توجد منتجات بعد</td></tr>';
+    }
+    function renderPricingMaterials() {
+      const target = document.getElementById('pricingMaterials');
+      target.innerHTML = adminMaterials.length ? adminMaterials.map(material => `<div class="row g-1 align-items-center mb-1"><div class="col-7 form-check"><input class="form-check-input pricing-material-check" type="checkbox" value="${material.Material_ID}" id="pricingMaterial${material.Material_ID}"><label class="form-check-label" for="pricingMaterial${material.Material_ID}">${escapeImageText(material.Material_Name)} ${material.Thickness ? `(${escapeImageText(material.Thickness)})` : ''}</label></div><div class="col-5"><input type="number" class="form-control form-control-sm pricing-material-price" data-material-id="${material.Material_ID}" min="0" step="0.01" placeholder="السعر" disabled></div></div>`).join('') : '<div class="text-muted small">أضف الخامات من صفحة المخزون أولاً.</div>';
+      target.querySelectorAll('.pricing-material-check').forEach(check => check.addEventListener('change', event => {
+        target.querySelector(`.pricing-material-price[data-material-id="${event.target.value}"]`).disabled = !event.target.checked;
+      }));
+    }
+    async function saveProductPricing(event) {
+      event.preventDefault();
+      const rows = [...document.querySelectorAll('.pricing-material-check:checked')].map(check => ({
+        Material_ID: Number(check.value), Price: Number(document.querySelector(`.pricing-material-price[data-material-id="${check.value}"]`).value)
+      }));
+      if (!rows.length || rows.some(row => !Number.isFinite(row.Price) || row.Price < 0)) return alert('اختر خامة واحدة على الأقل وحدد سعرًا صحيحًا لها');
+      const response = await fetch('/api/orders/pricing', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({
+        Product_Name: document.getElementById('pricingName').value.trim(), Category: document.getElementById('pricingCategory').value.trim(), Unit: document.getElementById('pricingUnit').value,
+        Base_Price: Number(document.getElementById('pricingBasePrice').value) || 0, Description: document.getElementById('pricingDescription').value.trim(), Material_Prices: rows
+      }) });
+      const data = await response.json();
+      if (!response.ok) return alert(data.error || 'تعذر حفظ المنتج');
+      document.getElementById('productPricingForm').reset();
+      await loadProductPricing();
+    }
+    async function deleteProductPricing(id) {
+      if (!confirm('حذف هذا المنتج وأسعاره؟')) return;
+      const response = await fetch(`/api/orders/pricing/${id}`, { method: 'DELETE', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      const data = await response.json();
+      if (!response.ok) return alert(data.error || 'تعذر الحذف');
+      loadProductPricing();
+    }
+    async function openImageMaterials(id) {
+      if (!adminMaterials.length) adminMaterials = await fetch('/api/inventory', { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+      const data = await fetch(`/api/orders/agent/images/${id}/materials`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
+      const selected = new Set((data.materials || []).map(material => Number(material.Material_ID)));
+      document.getElementById('imageMaterialsImageId').value = id;
+      document.getElementById('imageMaterialsList').innerHTML = adminMaterials.length ? adminMaterials.map(material => `<div class="form-check"><input class="form-check-input image-material-check" type="checkbox" value="${material.Material_ID}" id="imageMaterial${material.Material_ID}" ${selected.has(Number(material.Material_ID)) ? 'checked' : ''}><label class="form-check-label" for="imageMaterial${material.Material_ID}">${escapeImageText(material.Material_Name)} ${material.Thickness ? `(${escapeImageText(material.Thickness)})` : ''}</label></div>`).join('') : '<div class="text-muted">لا توجد خامات في المخزون.</div>';
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('imageMaterialsModal')).show();
+    }
+    async function saveImageMaterials() {
+      const id = document.getElementById('imageMaterialsImageId').value;
+      const Material_IDs = [...document.querySelectorAll('.image-material-check:checked')].map(input => Number(input.value));
+      const response = await fetch(`/api/orders/agent/images/${id}/materials`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ Material_IDs }) });
+      const data = await response.json();
+      if (!response.ok) return alert(data.error || 'تعذر حفظ الخامات');
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('imageMaterialsModal')).hide();
+      loadLibraryImages();
+    }
+
     function renderLibraryImages(images) {
       const grid = document.getElementById('libraryImagesGrid');
       if (!images.length) {
@@ -649,6 +740,7 @@
             </div>
             <div class="card-footer p-2 d-flex gap-1">
               <a href="/api/orders/agent/images/${img.Image_ID}/file" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary flex-fill">عرض كامل</a>
+              <button class="btn btn-sm btn-outline-success flex-fill" onclick="openImageMaterials(${img.Image_ID})">خامات</button>
               ${img.Design_ID ? `<button class="btn btn-sm btn-outline-secondary flex-fill" onclick="unlinkImageFromDesign(${img.Image_ID})"><i class="bi bi-link-45deg"></i> فك الارتباط</button>` : ''}
               <button class="btn btn-sm btn-outline-danger flex-fill" onclick="deleteLibraryImage(${img.Image_ID})"><i class="bi bi-trash"></i> حذف</button>
             </div>
@@ -1037,6 +1129,7 @@
       link.addEventListener('click', function(e) {
         const tab = this.dataset.tab;
         if (tab === 'library-images') loadLibraryImages();
+        if (tab === 'product-pricing') loadProductPricing();
         if (tab === 'ready-designs') loadDesigns();
         if (tab === 'custom-requests') loadCustomRequests();
         if (tab === 'agent-custom-orders') loadAgentCustomOrders();
@@ -1049,6 +1142,7 @@
     refreshPendingBadge();
     document.getElementById('uploadAdminImagesButton').addEventListener('click', uploadAdminImages);
     document.getElementById('uploadImageFiles').addEventListener('change', previewChosenImages);
+    document.getElementById('productPricingForm').addEventListener('submit', saveProductPricing);
 
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>

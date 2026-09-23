@@ -115,16 +115,36 @@ router.post('/', requirePermission('orders'), (req, res) => {
   if (!['Admin', 'Designer', 'Custom', 'Agent'].includes(req.session.role)) {
     return res.status(403).json({ error: 'إنشاء الطلبات غير متاح لهذا الدور' });
   }
-  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs, Quantities, Agent_Price, Agent_Commission, Final_Price } = req.body;
+  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs, Quantities, Pricing_ID, Material_ID, Agent_Price, Agent_Commission, Final_Price } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
   const machineType = (Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
 
   const initialStatus = isAgent ? 'بانتظار الموافقة' : 'قيد التصميم';
   const approvalStatus = isAgent ? 'pending' : 'approved';
 
-  const agentPrice = isAgent ? (parseFloat(Agent_Price) || 0) : 0;
+  let agentPrice = isAgent ? (parseFloat(Agent_Price) || 0) : 0;
   const agentCommission = isAgent ? (parseFloat(Agent_Commission) || 0) : 0;
-  const finalPrice = isAgent ? (parseFloat(Final_Price) || agentPrice + agentCommission) : 0;
+  let finalPrice = isAgent ? (parseFloat(Final_Price) || agentPrice + agentCommission) : 0;
+  const selectedMaterialId = Number(Material_ID);
+  if (isAgent) {
+    if (!Pricing_ID || !selectedMaterialId) return res.status(400).json({ error: 'اختر المنتج والخامة قبل إرسال الطلب' });
+    const product = db.get('SELECT * FROM Product_Pricing WHERE Pricing_ID=? AND Is_Active=1', [Pricing_ID]);
+    const material = db.get('SELECT * FROM Inventory WHERE Material_ID=?', [selectedMaterialId]);
+    if (!product || !material) return res.status(400).json({ error: 'المنتج أو الخامة المختارة غير متاحين' });
+    const configured = db.all('SELECT * FROM Product_Material_Pricing WHERE Pricing_ID=? AND Is_Active=1', [Pricing_ID]);
+    const materialPrice = configured.find(row => Number(row.Material_ID) === selectedMaterialId);
+    if (configured.length && !materialPrice) return res.status(400).json({ error: 'هذه الخامة غير مسموحة للمنتج المختار' });
+    if (Array.isArray(Image_IDs)) {
+      for (const imageId of Image_IDs) {
+        const allowed = db.all('SELECT Material_ID FROM Agent_Image_Materials WHERE Image_ID=?', [imageId]);
+        if (allowed.length && !allowed.some(row => Number(row.Material_ID) === selectedMaterialId)) {
+          return res.status(400).json({ error: 'الخامة المختارة لا تناسب إحدى الصور المحددة' });
+        }
+      }
+    }
+    agentPrice = materialPrice ? Number(materialPrice.Price) : Number(product.Base_Price);
+    finalPrice = agentPrice + agentCommission;
+  }
 
   const result = db.run(
     `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes, Agent_Price, Agent_Commission, Final_Price)
@@ -134,9 +154,7 @@ router.post('/', requirePermission('orders'), (req, res) => {
 
   if (!result.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
 
-  if (isAgent && Sheets) {
-    db.run("UPDATE Orders SET Material_Qty = ? WHERE Task_ID = ?", [parseFloat(Sheets) || 0, result.lastId]);
-  }
+  if (isAgent && Sheets) db.run("UPDATE Orders SET Material_ID=?, Material_Qty = ? WHERE Task_ID = ?", [selectedMaterialId, parseFloat(Sheets) || 0, result.lastId]);
 
   if (isAgent && Image_IDs && Array.isArray(Image_IDs) && Image_IDs.length > 0) {
     let totalSheets = 0;
@@ -151,7 +169,8 @@ router.post('/', requirePermission('orders'), (req, res) => {
       }
     });
     if (totalSheets > 0) {
-      db.run("UPDATE Orders SET Material_Qty = ? WHERE Task_ID = ?", [totalSheets, result.lastId]);
+      db.run("UPDATE Orders SET Material_ID=?, Material_Qty = ? WHERE Task_ID = ?", [selectedMaterialId, totalSheets, result.lastId]);
+      db.run("INSERT INTO Order_Materials (Task_ID, Material_ID, Quantity) VALUES (?, ?, ?)", [result.lastId, selectedMaterialId, totalSheets]);
     }
   }
 
@@ -492,8 +511,35 @@ router.get('/agent/images', requirePermission('orders'), (req, res) => {
     params.push(category);
   }
   sql += ' ORDER BY Created_At DESC';
-  const images = db.all(sql, params);
+  const images = db.all(sql, params).map(image => ({
+    ...image,
+    Materials: db.all(`SELECT i.Material_ID, i.Material_Name, i.Thickness
+      FROM Agent_Image_Materials aim JOIN Inventory i ON i.Material_ID=aim.Material_ID
+      WHERE aim.Image_ID=? ORDER BY i.Material_Name`, [image.Image_ID])
+  }));
   res.json({ images });
+});
+
+router.get('/agent/images/:id/materials', requirePermission('orders'), (req, res) => {
+  const image = db.get('SELECT Image_ID FROM Agent_Images WHERE Image_ID=?', [req.params.id]);
+  if (!image) return res.status(404).json({ error: 'الصورة غير موجودة' });
+  const materials = db.all(`SELECT i.Material_ID, i.Material_Name, i.Thickness
+    FROM Agent_Image_Materials aim JOIN Inventory i ON i.Material_ID=aim.Material_ID
+    WHERE aim.Image_ID=? ORDER BY i.Material_Name`, [req.params.id]);
+  res.json({ materials });
+});
+
+router.put('/agent/images/:id/materials', requirePermission('orders'), (req, res) => {
+  if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
+    return res.status(403).json({ error: 'تعديل خامات الصور متاح للإدارة فقط' });
+  }
+  const image = db.get('SELECT Image_ID FROM Agent_Images WHERE Image_ID=?', [req.params.id]);
+  if (!image) return res.status(404).json({ error: 'الصورة غير موجودة' });
+  const ids = [...new Set((Array.isArray(req.body.Material_IDs) ? req.body.Material_IDs : []).map(Number).filter(Number.isInteger))];
+  for (const id of ids) if (!db.get('SELECT Material_ID FROM Inventory WHERE Material_ID=?', [id])) return res.status(400).json({ error: 'إحدى الخامات غير موجودة' });
+  db.run('DELETE FROM Agent_Image_Materials WHERE Image_ID=?', [image.Image_ID]);
+  ids.forEach(id => db.run('INSERT INTO Agent_Image_Materials (Image_ID, Material_ID) VALUES (?, ?)', [image.Image_ID, id]));
+  res.json({ success: true });
 });
 
 router.get('/agent/images/:id/file', requirePermission('orders'), (req, res) => {
@@ -594,13 +640,21 @@ router.get('/pending', requirePermission('orders'), (req, res) => {
 });
 
 // ==================== Product Pricing APIs (Admin) ====================
+function withMaterialPrices(pricing) {
+  return pricing.map(product => ({
+    ...product,
+    Materials: db.all(`SELECT pmp.Material_ID, pmp.Price, pmp.Is_Active, i.Material_Name, i.Thickness, i.Quantity
+      FROM Product_Material_Pricing pmp JOIN Inventory i ON i.Material_ID=pmp.Material_ID
+      WHERE pmp.Pricing_ID=? ORDER BY i.Material_Name`, [product.Pricing_ID])
+  }));
+}
+
 // List all product pricing
 router.get('/pricing', requirePermission('orders'), (req, res) => {
   if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
     return res.status(403).json({ error: 'غير مصرح' });
   }
-  const pricing = db.all("SELECT * FROM Product_Pricing ORDER BY Category, Product_Name");
-  res.json({ pricing });
+  res.json({ pricing: withMaterialPrices(db.all("SELECT * FROM Product_Pricing ORDER BY Category, Product_Name")) });
 });
 
 // Create product pricing (Admin only)
@@ -608,7 +662,7 @@ router.post('/pricing', requirePermission('orders'), (req, res) => {
   if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
     return res.status(403).json({ error: 'إضافة الأسعار متاحة للأدمن فقط' });
   }
-  const { Product_Name, Category, Base_Price, Unit, Description } = req.body;
+  const { Product_Name, Category, Base_Price, Unit, Description, Material_Prices } = req.body;
   if (!Product_Name || Base_Price === undefined) {
     return res.status(400).json({ error: 'اسم المنتج والسعر الأساسي مطلوبان' });
   }
@@ -616,7 +670,15 @@ router.post('/pricing', requirePermission('orders'), (req, res) => {
     `INSERT INTO Product_Pricing (Product_Name, Category, Base_Price, Unit, Description) VALUES (?, ?, ?, ?, ?)`,
     [Product_Name, Category || 'عام', parseFloat(Base_Price) || 0, Unit || 'لوح', Description || '']
   );
-  const pricing = db.get("SELECT * FROM Product_Pricing WHERE Pricing_ID = ?", [result.lastId]);
+  const materialPrices = Array.isArray(Material_Prices) ? Material_Prices : [];
+  for (const row of materialPrices) {
+    const materialId = Number(row.Material_ID);
+    const price = Number(row.Price);
+    if (!Number.isInteger(materialId) || !Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'بيانات خامة أو سعر غير صالحة' });
+    if (!db.get('SELECT Material_ID FROM Inventory WHERE Material_ID=?', [materialId])) return res.status(400).json({ error: 'إحدى الخامات غير موجودة' });
+    db.run('INSERT INTO Product_Material_Pricing (Pricing_ID, Material_ID, Price) VALUES (?, ?, ?)', [result.lastId, materialId, price]);
+  }
+  const pricing = withMaterialPrices([db.get("SELECT * FROM Product_Pricing WHERE Pricing_ID = ?", [result.lastId])])[0];
   res.json({ success: true, pricing });
 });
 
@@ -625,12 +687,22 @@ router.put('/pricing/:id', requirePermission('orders'), (req, res) => {
   if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
     return res.status(403).json({ error: 'تعديل الأسعار متاح للأدمن فقط' });
   }
-  const { Product_Name, Category, Base_Price, Unit, Description, Is_Active } = req.body;
+  const { Product_Name, Category, Base_Price, Unit, Description, Is_Active, Material_Prices } = req.body;
   db.run(
     `UPDATE Product_Pricing SET Product_Name=COALESCE(?,Product_Name), Category=COALESCE(?,Category), Base_Price=COALESCE(?,Base_Price), Unit=COALESCE(?,Unit), Description=COALESCE(?,Description), Is_Active=COALESCE(?,Is_Active), Updated_At=CURRENT_TIMESTAMP WHERE Pricing_ID=?`,
     [Product_Name || null, Category || null, Base_Price !== undefined ? parseFloat(Base_Price) : null, Unit || null, Description || null, Is_Active !== undefined ? (Is_Active ? 1 : 0) : null, req.params.id]
   );
-  const pricing = db.get("SELECT * FROM Product_Pricing WHERE Pricing_ID = ?", [req.params.id]);
+  if (Array.isArray(Material_Prices)) {
+    db.run('DELETE FROM Product_Material_Pricing WHERE Pricing_ID=?', [req.params.id]);
+    for (const row of Material_Prices) {
+      const materialId = Number(row.Material_ID); const price = Number(row.Price);
+      if (!Number.isInteger(materialId) || !Number.isFinite(price) || price < 0 || !db.get('SELECT Material_ID FROM Inventory WHERE Material_ID=?', [materialId])) {
+        return res.status(400).json({ error: 'بيانات خامة أو سعر غير صالحة' });
+      }
+      db.run('INSERT INTO Product_Material_Pricing (Pricing_ID, Material_ID, Price) VALUES (?, ?, ?)', [req.params.id, materialId, price]);
+    }
+  }
+  const pricing = withMaterialPrices([db.get("SELECT * FROM Product_Pricing WHERE Pricing_ID = ?", [req.params.id])])[0];
   res.json({ success: true, pricing });
 });
 
@@ -639,6 +711,7 @@ router.delete('/pricing/:id', requirePermission('orders'), (req, res) => {
   if (req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
     return res.status(403).json({ error: 'حذف الأسعار متاح للأدمن فقط' });
   }
+  db.run("DELETE FROM Product_Material_Pricing WHERE Pricing_ID = ?", [req.params.id]);
   db.run("DELETE FROM Product_Pricing WHERE Pricing_ID = ?", [req.params.id]);
   res.json({ success: true });
 });
@@ -699,21 +772,10 @@ router.get('/agent/pricing', requirePermission('orders'), (req, res) => {
   if (req.session.role !== 'Agent') {
     return res.status(403).json({ error: 'غير مصرح' });
   }
-  // Get active product pricing that has client pricing for this agent's clients
-  const clientIds = db.all("SELECT Client_ID FROM Clients WHERE Created_By = ?", [req.session.userId]).map(c => c.Client_ID);
-  if (!clientIds.length) {
-    return res.json({ pricing: [] });
-  }
-  const placeholders = clientIds.map(() => '?').join(',');
-  const pricing = db.all(`
-    SELECT DISTINCT pp.*, cp.Agent_Price, cp.Agent_Commission, cp.Final_Price, c.Full_Name as Client_Name
-    FROM Product_Pricing pp
-    JOIN Client_Pricing cp ON pp.Pricing_ID = cp.Pricing_ID
-    JOIN Clients c ON cp.Client_ID = c.Client_ID
-    WHERE pp.Is_Active = 1 AND cp.Client_ID IN (${placeholders})
-    ORDER BY pp.Category, pp.Product_Name
-  `, clientIds);
-  res.json({ pricing });
+  // Product prices are available immediately to the agent; material-specific
+  // rows decide the final base price after a material is selected.
+  res.json({ pricing: withMaterialPrices(db.all(`SELECT * FROM Product_Pricing
+    WHERE Is_Active=1 ORDER BY Category, Product_Name`)) });
 });
 
 module.exports = router;

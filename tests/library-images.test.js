@@ -126,3 +126,19 @@ test('adding an agent client uses a resilient modal close path', () => {
   assert.match(source, /newClientForm.*addEventListener\('submit', addNewClient\)/s);
   assert.match(source, /saveNewClientButton/);
 });
+
+test('product-material pricing is persisted and wired into admin and agent flows', () => {
+  const init = fs.readFileSync(path.join(__dirname, '..', 'database', 'init.js'), 'utf8');
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'orders.js'), 'utf8');
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'views', 'admin.ejs'), 'utf8');
+  const agent = fs.readFileSync(path.join(__dirname, '..', 'views', 'agent.ejs'), 'utf8');
+  assert.match(init, /CREATE TABLE IF NOT EXISTS Product_Material_Pricing/);
+  assert.match(init, /CREATE TABLE IF NOT EXISTS Agent_Image_Materials/);
+  assert.match(routes, /agent\/images\/:id\/materials/);
+  assert.match(routes, /الخامة المختارة لا تناسب إحدى الصور المحددة/);
+  assert.match(routes, /withMaterialPrices/);
+  assert.match(admin, /المنتجات والأسعار/);
+  assert.match(admin, /openImageMaterials/);
+  assert.match(agent, /allowedMaterials/);
+  assert.match(agent, /selectedMaterialId/);
+});
