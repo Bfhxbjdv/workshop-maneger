@@ -12,17 +12,32 @@ const { resolveLocalFile, imageHeaders } = require('../services/localFiles');
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
 
-const upload = multer({
+// Design attachments can be produced by several CAD/CAM applications, so do
+// not reject a valid workshop file merely because its extension is unfamiliar.
+// They remain behind authenticated download routes.
+const designUpload = multer({
   dest: path.join(__dirname, '..', 'uploads'),
-  limits: { fileSize: 25 * 1024 * 1024, files: 50, fields: 20 },
+  limits: { fileSize: 25 * 1024 * 1024, files: 50, fields: 20 }
+});
+const imageUpload = multer({
+  dest: path.join(__dirname, '..', 'uploads'),
+  limits: { fileSize: 25 * 1024 * 1024, files: 10, fields: 20 },
   fileFilter: (req, file, cb) => {
-    const allowed = new Set(['.dxf', '.plt', '.svg', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ai', '.eps', '.cdr', '.txt']);
+    const allowed = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
     cb(null, allowed.has(path.extname(file.originalname || '').toLowerCase()));
   }
 });
 
 function safeFileName(name) {
   return path.basename(String(name || 'file')).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').replace(/^\.+/, '') || 'file';
+}
+
+// Uploading a replacement/new production file means the approved order is
+// ready for the machine again. Pending agent requests must still be approved
+// first, and completed/delivered orders must never be moved backwards.
+function shouldSendToMachine(order) {
+  if (!order || ['pending', 'rejected'].includes(order.Approval_Status)) return false;
+  return !['تم الانتهاء من القص', 'تم التغليف', 'تم التسليم', 'ملغي'].includes(order.Status);
 }
 
 function ensureClientDir(clientName) {
@@ -61,7 +76,7 @@ function checkConnectivity() {
   });
 }
 
-router.post('/upload/:taskId', requirePermission('orders'), upload.array('files', 50), async (req, res) => {
+router.post('/upload/:taskId', requirePermission('orders'), designUpload.array('files', 50), async (req, res) => {
   try {
     const taskId = req.params.taskId;
     const order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [taskId]);
@@ -131,9 +146,7 @@ router.post('/upload/:taskId', requirePermission('orders'), upload.array('files'
       results.push({ originalName: file.originalname, label, storedName, size: file.size });
     }
 
-    // Only advance to ready-to-cut from the design phase — never move
-    // pending-approval or already-delivered orders backwards/forwards.
-    if (order.Status === 'قيد التصميم') {
+    if (shouldSendToMachine(order)) {
       db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [firstFilePath, firstFileName, taskId]);
     } else {
       db.run("UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [firstFilePath, firstFileName, taskId]);
@@ -159,7 +172,7 @@ router.post('/upload/:taskId', requirePermission('orders'), upload.array('files'
   } catch (e) { console.error('Upload error:', e); res.status(500).json({ error: e.message || 'فشل رفع الملفات' }); }
 });
 
-router.post('/upload-image/:taskId', requirePermission('orders'), upload.array('image', 10), async (req, res) => {
+router.post('/upload-image/:taskId', requirePermission('orders'), imageUpload.array('image', 10), async (req, res) => {
   try {
     const taskId = req.params.taskId;
     const order = db.get("SELECT o.*, c.Full_Name as Client_Name FROM Orders o LEFT JOIN Clients c ON o.Client_ID=c.Client_ID WHERE o.Task_ID=?", [taskId]);
@@ -270,7 +283,7 @@ router.post('/copy/:taskId', requirePermission('orders'), async (req, res) => {
     if (copied.length) {
       const first = db.get("SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_ID LIMIT 1", [taskId]);
       if (first) {
-        if (order.Status === 'قيد التصميم') {
+        if (shouldSendToMachine(order)) {
           db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [first.File_Path, first.Original_Name, taskId]);
         } else {
           db.run("UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [first.File_Path, first.Original_Name, taskId]);

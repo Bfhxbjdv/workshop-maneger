@@ -112,6 +112,11 @@ function canAccessDesign(req, designId) {
   return !!db.get('SELECT 1 FROM Design_Permissions WHERE Design_ID=? AND User_ID=?', [designId, req.session.userId]);
 }
 
+function shouldSendToMachine(order) {
+  if (!order || ['pending', 'rejected'].includes(order.Approval_Status)) return false;
+  return !['تم الانتهاء من القص', 'تم التغليف', 'تم التسليم', 'ملغي'].includes(order.Status);
+}
+
 // ---------- helper: design with permission visibility ----------
 function visibleDesignSql(user) {
   if (user.role === 'Admin') {
@@ -450,7 +455,7 @@ router.post('/:id/add-to-order', requirePermission('orders'), async (req, res) =
     const ins = db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, GDrive_File_ID, File_Size, Label, File_Type, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, ?, 'design', ?)",
       [order.Task_ID, design.Original_Name, storedName, filePath, gdriveFileId, buffer.length, `${design.Name}${design.Notes ? ' - ' + design.Notes : ''}`, req.session.userId]);
 
-    if (order.Status === 'قيد التصميم') {
+    if (shouldSendToMachine(order)) {
       db.run("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [filePath, design.Original_Name, order.Task_ID]);
     } else {
       db.run("UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [filePath, design.Original_Name, order.Task_ID]);

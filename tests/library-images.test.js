@@ -157,3 +157,13 @@ test('ready-design modal uploads a selected local file instead of accepting a st
   assert.match(admin, /انتهت جلسة الدخول/);
   assert.doesNotMatch(admin, /id="designFilePath"/);
 });
+
+test('uploading an approved order file moves it to the machine-ready queue', () => {
+  const files = fs.readFileSync(path.join(__dirname, '..', 'routes', 'files.js'), 'utf8');
+  const designs = fs.readFileSync(path.join(__dirname, '..', 'routes', 'designs.js'), 'utf8');
+  assert.match(files, /function shouldSendToMachine\(order\)/);
+  assert.match(files, /Status='جاهز للقص'/);
+  assert.match(files, /designUpload\.array\('files', 50\)/);
+  assert.match(designs, /function shouldSendToMachine\(order\)/);
+  assert.match(designs, /if \(shouldSendToMachine\(order\)\)/);
+});
