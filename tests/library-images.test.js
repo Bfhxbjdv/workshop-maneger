@@ -203,3 +203,13 @@ test('an agent order carries each linked ready-design file to the designer', () 
   assert.match(orders, /SELECT File_Path, Original_Name, Stored_Name, Design_ID FROM Agent_Images/);
   assert.match(orders, /التصميم المرتبط بالصورة/);
 });
+
+test('admin can preview agent order and custom request attachments', () => {
+  const admin = fs.readFileSync(path.join(__dirname, '..', 'views', 'admin.ejs'), 'utf8');
+  const agents = fs.readFileSync(path.join(__dirname, '..', 'routes', 'agents.js'), 'utf8');
+  const localFiles = fs.readFileSync(path.join(__dirname, '..', 'services', 'localFiles.js'), 'utf8');
+  assert.match(admin, /showOrderAttachments/);
+  assert.match(admin, /showCustomRequestAttachments/);
+  assert.match(agents, /custom-requests\/:id\/files/);
+  assert.match(localFiles, /customDesignRoot/);
+});

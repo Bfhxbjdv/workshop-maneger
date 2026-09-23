@@ -33,6 +33,22 @@ function logActivity(agentId, action, entityType, entityId, details, req) {
   } catch (e) { console.error('Log activity error:', e); }
 }
 
+function customRequestFiles(request) {
+  if (!request?.Image_Path) return [];
+  let paths = [];
+  try {
+    const parsed = JSON.parse(request.Image_Path);
+    paths = Array.isArray(parsed) ? parsed : [request.Image_Path];
+  } catch { paths = [request.Image_Path]; }
+  const root = path.resolve(CUSTOM_DESIGN_DIR);
+  return paths.filter(filePath => {
+    if (typeof filePath !== 'string') return false;
+    const resolved = path.resolve(filePath);
+    const relative = path.relative(root, resolved);
+    return !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative) && fs.existsSync(resolved);
+  });
+}
+
 function calculateAgentCommission(order, clientPricing) {
   if (!clientPricing) return 0;
   return (clientPricing.Final_Price - clientPricing.Agent_Price) * (order.Material_Qty || 1);
@@ -1018,6 +1034,27 @@ router.get('/admin/custom-requests', requireAuth(['Admin']), (req, res) => {
 // Update custom design request status.
 // Approving (in_progress) turns the custom request into a REAL order so it
 // appears immediately for the designer like any other order.
+router.get('/admin/custom-requests/:id/files', requireAuth(['Admin']), (req, res) => {
+  const request = db.get('SELECT * FROM Agent_Custom_Designs WHERE Custom_Design_ID=?', [req.params.id]);
+  if (!request) return res.status(404).json({ error: 'الطلب غير موجود' });
+  const files = customRequestFiles(request).map((filePath, index) => ({
+    index,
+    Original_Name: path.basename(filePath),
+    preview_url: `/api/agents/admin/custom-requests/${request.Custom_Design_ID}/files/${index}`,
+    download_url: `/api/agents/admin/custom-requests/${request.Custom_Design_ID}/files/${index}?download=1`
+  }));
+  res.json({ files });
+});
+
+router.get('/admin/custom-requests/:id/files/:index', requireAuth(['Admin']), (req, res) => {
+  const request = db.get('SELECT * FROM Agent_Custom_Designs WHERE Custom_Design_ID=?', [req.params.id]);
+  if (!request) return res.status(404).json({ error: 'الطلب غير موجود' });
+  const filePath = customRequestFiles(request)[Number(req.params.index)];
+  if (!filePath) return res.status(404).json({ error: 'الملف غير موجود' });
+  if (req.query.download === '1') return res.download(filePath, path.basename(filePath));
+  res.sendFile(filePath);
+});
+
 router.put('/admin/custom-requests/:id/status', requireAuth(['Admin']), (req, res) => {
   try {
     const { status, designer_id, notes, client_id, machine_type } = req.body;
@@ -1072,16 +1109,7 @@ router.put('/admin/custom-requests/:id/status', requireAuth(['Admin']), (req, re
       // actually carries its files (this is what the "agent custom orders"
       // list displays). Image_Path holds one path or a JSON array of paths.
       try {
-        let storedPaths = [];
-        const rawPath = request.Image_Path;
-        if (rawPath) {
-          try {
-            const parsed = JSON.parse(rawPath);
-            storedPaths = Array.isArray(parsed) ? parsed : [rawPath];
-          } catch {
-            storedPaths = [rawPath];
-          }
-        }
+        const storedPaths = customRequestFiles(request);
         storedPaths.forEach((fp) => {
           if (!fp || typeof fp !== 'string') return;
           let size = 0;

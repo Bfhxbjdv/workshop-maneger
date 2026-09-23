@@ -4,6 +4,7 @@ const path = require('path');
 const storageRoot = path.resolve(__dirname, '..', 'Server_Storage');
 const archiveRoot = path.join(storageRoot, 'Clients_Archive');
 const imageRoot = path.join(storageRoot, 'Agent_Images');
+const customDesignRoot = path.join(storageRoot, 'Custom_Designs');
 
 function inside(root, candidate) {
   const relative = path.relative(root, candidate);
@@ -11,7 +12,7 @@ function inside(root, candidate) {
 }
 
 // Older library records contain absolute paths; ordinary order files are relative.
-function resolveLocalFile(filePath, roots = [archiveRoot, imageRoot], base = archiveRoot) {
+function resolveLocalFile(filePath, roots = [archiveRoot, imageRoot, customDesignRoot], base = archiveRoot) {
   if (typeof filePath !== 'string' || !filePath || filePath.includes('\0') || filePath.includes('://')) return null;
   const candidate = path.resolve(base, filePath);
   if (!roots.some(root => inside(root, candidate))) return null;

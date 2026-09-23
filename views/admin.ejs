@@ -362,6 +362,10 @@
     <div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 id="imageDesignLinkTitle">ربط الصورة بتصميم</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" id="imageDesignLinkImageId"><label for="imageDesignLinkSelect" class="form-label">اختر التصميم</label><select id="imageDesignLinkSelect" class="form-select"><option value="">-- اختر التصميم --</option></select><div class="form-text">سيظهر هذا التصميم للوكلاء عند اختيارهم لهذه الصورة.</div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button type="button" id="saveImageDesignLinkButton" class="btn btn-primary" onclick="saveImageDesignLink()">حفظ الربط</button></div></div></div>
   </div>
 
+  <div class="modal fade" id="orderAttachmentsModal" tabindex="-1" aria-labelledby="orderAttachmentsTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg"><div class="modal-content"><div class="modal-header"><h5 id="orderAttachmentsTitle">صور وملفات الطلب</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body" id="orderAttachmentsBody"><div class="text-center text-muted py-3">جارٍ التحميل...</div></div></div></div>
+  </div>
+
   <!-- Approve Custom Request Modal -->
   <div class="modal fade" id="approveCustomModal" tabindex="-1">
     <div class="modal-dialog">
@@ -1017,6 +1021,7 @@
           <td>${r.Designer_ID ? 'مصمم #' + r.Designer_ID : '-'}</td>
           <td><small>${new Date(r.Created_At).toLocaleDateString('ar-SA')}</small></td>
           <td class="text-nowrap">
+            <button class="btn btn-sm btn-outline-primary" onclick="showCustomRequestAttachments(${r.Custom_Design_ID})"><i class="bi bi-images"></i> المرفقات</button>
             ${r.Status === 'pending' ? `<button class="btn btn-sm btn-success" onclick="openApproveCustomModal(${r.Custom_Design_ID}, ${r.Order_ID || 'null'})"><i class="bi bi-check-lg"></i> موافقة وبدء التنفيذ</button>` : ''}
             ${r.Status === 'in_progress' ? `<button class="btn btn-sm btn-outline-success" onclick="setCustomRequestStatus(${r.Custom_Design_ID}, 'completed')"><i class="bi bi-flag"></i> إتمام</button>` : ''}
             ${r.Status !== 'cancelled' && r.Status !== 'completed' ? `<button class="btn btn-sm btn-outline-danger" onclick="cancelCustomRequest(${r.Custom_Design_ID})"><i class="bi bi-x-lg"></i> إلغاء</button>` : ''}
@@ -1139,6 +1144,43 @@
       window.open(`/api/files/image/${fileId}`, '_blank', 'noopener');
     }
 
+    function isPreviewImage(name) {
+      return /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(name || '');
+    }
+
+    async function showOrderAttachments(taskId) {
+      const title = document.getElementById('orderAttachmentsTitle');
+      const body = document.getElementById('orderAttachmentsBody');
+      title.textContent = `صور وملفات الطلب #${taskId}`;
+      body.innerHTML = '<div class="text-center text-muted py-3">جارٍ تحميل الملفات...</div>';
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('orderAttachmentsModal')).show();
+      try {
+        const response = await fetch(`/api/files/list/${taskId}`, { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' } });
+        const files = await response.json();
+        if (!response.ok || !Array.isArray(files)) throw new Error('تعذر تحميل ملفات الطلب');
+        if (!files.length) { body.innerHTML = '<div class="text-center text-muted py-3">لا توجد ملفات مرفقة بهذا الطلب.</div>'; return; }
+        const images = files.filter(file => file.File_Type === 'image');
+        const designs = files.filter(file => file.File_Type !== 'image');
+        body.innerHTML = `${images.length ? `<h6>صور الوكيل</h6><div class="d-flex flex-wrap gap-2 mb-3">${images.map(file => `<a href="/api/files/image/${file.File_ID}" target="_blank" rel="noopener"><img src="/api/files/image/${file.File_ID}" class="img-thumbnail" style="width:120px;height:120px;object-fit:contain" alt="${escapeImageText(file.Original_Name)}"></a>`).join('')}</div>` : ''}${designs.length ? `<h6>ملفات التصميم</h6><div class="list-group">${designs.map(file => `<a href="/api/files/download-file/${file.File_ID}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"><span><i class="bi bi-file-earmark"></i> ${escapeImageText(file.Label || file.Original_Name)}</span><i class="bi bi-download"></i></a>`).join('')}</div>` : ''}`;
+      } catch (error) { body.innerHTML = `<div class="alert alert-danger mb-0">${escapeImageText(error.message || 'تعذر تحميل الملفات')}</div>`; }
+    }
+
+    async function showCustomRequestAttachments(requestId) {
+      const title = document.getElementById('orderAttachmentsTitle');
+      const body = document.getElementById('orderAttachmentsBody');
+      title.textContent = 'مرفقات طلب التصميم المخصص';
+      body.innerHTML = '<div class="text-center text-muted py-3">جارٍ تحميل الملفات...</div>';
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('orderAttachmentsModal')).show();
+      try {
+        const response = await fetch(`/api/agents/admin/custom-requests/${requestId}/files`, { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'تعذر تحميل المرفقات');
+        const files = data.files || [];
+        if (!files.length) { body.innerHTML = '<div class="text-center text-muted py-3">لم يرفق الوكيل ملفاتًا مع هذا الطلب.</div>'; return; }
+        body.innerHTML = `<div class="d-flex flex-wrap gap-2">${files.map(file => isPreviewImage(file.Original_Name) ? `<a href="${file.preview_url}" target="_blank" rel="noopener"><img src="${file.preview_url}" class="img-thumbnail" style="width:140px;height:140px;object-fit:contain" alt="${escapeImageText(file.Original_Name)}"></a>` : `<a href="${file.download_url}" class="btn btn-outline-primary"><i class="bi bi-download"></i> ${escapeImageText(file.Original_Name)}</a>`).join('')}</div>`;
+      } catch (error) { body.innerHTML = `<div class="alert alert-danger mb-0">${escapeImageText(error.message || 'تعذر تحميل المرفقات')}</div>`; }
+    }
+
     // ============ PENDING APPROVALS (agent orders) ============
     async function loadPendingApprovals() {
       const tbody = document.getElementById('pendingApprovalsTableBody');
@@ -1163,6 +1205,7 @@
             <td><small class="text-muted">${(o.Notes || '').substring(0, 60)}</small></td>
             <td><small>${o.Created_At ? new Date(o.Created_At).toLocaleString('ar-SA') : ''}</small></td>
             <td class="text-nowrap">
+              <button class="btn btn-sm btn-outline-primary" onclick="showOrderAttachments(${o.Task_ID})"><i class="bi bi-images"></i> المرفقات</button>
               <button class="btn btn-sm btn-success" onclick="openOrderApproveModal(${o.Task_ID})"><i class="bi bi-check-lg"></i> موافقة</button>
               <button class="btn btn-sm btn-outline-danger" onclick="rejectPendingOrder(${o.Task_ID})"><i class="bi bi-x-lg"></i> رفض</button>
             </td>

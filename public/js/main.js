@@ -67,7 +67,7 @@ function loadOrders(page = 1, filter = currentFilter) {
         <td><small class="text-muted">${(o.Notes || '').substring(0, 30)}</small></td>
         <td><span class="badge bg-${sc}">${o.Status}</span></td>
         <td>${showUploadBtn
-          ? `<button class="btn btn-sm btn-outline-primary" onclick="openUploadModal(${o.Task_ID})"><i class="bi bi-upload"></i></button>`
+          ? `<button class="btn btn-sm btn-outline-primary" onclick="openUploadModal(${o.Task_ID})" title="الملفات والصور"><i class="bi bi-images"></i></button>${o.File_Count > 0 ? ` <span class="badge bg-success">${o.File_Count}</span>` : ''}`
           : hasFile ? `<span class="badge bg-success"><i class="bi bi-check"></i>${o.File_Count > 0 ? ` ${o.File_Count}` : ''}</span>` : '-'}</td>
         <td>
           <div class="d-flex align-items-center gap-1">
