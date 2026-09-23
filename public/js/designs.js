@@ -853,8 +853,11 @@ function parseDxfEntities(text) {
       while (i < struct.length && struct[i].code !== 0) {
         const c = struct[i].code;
         const v = struct[i].value;
-        if (c === 10) verts.push([parseFloat(v), null]);
-        else if (c === 20 && verts.length) verts[verts.length - 1][1] = parseFloat(v);
+        // Keep the first point both as a vertex (for polylines) and as DXF
+        // properties (for ordinary LINE entities). Previously LINE's start
+        // point was discarded, producing an empty DXF thumbnail.
+        if (c === 10) { props[10] = parseFloat(v); verts.push([parseFloat(v), null]); }
+        else if (c === 20 && verts.length) { props[20] = parseFloat(v); verts[verts.length - 1][1] = parseFloat(v); }
         else if (c === 11 || c === 21 || c === 40 || c === 50 || c === 51 || c === 30) props[c] = parseFloat(v);
         else if (c === 70) props[c] = parseInt(v, 10);
         else if (c === 1) props[c] = v;

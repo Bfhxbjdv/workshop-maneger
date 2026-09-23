@@ -174,4 +174,6 @@ test('ready-design cards generate correct previews for DXF, PLT and embedded CDR
   assert.match(script, /drawDxf\(canvas, source\)/);
   assert.match(script, /drawPlt\(canvas, source\)/);
   assert.match(script, /extractEmbeddedCdrPreview/);
+  assert.match(script, /props\[10\] = parseFloat\(v\)/);
+  assert.match(script, /props\[20\] = parseFloat\(v\)/);
 });
