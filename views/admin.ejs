@@ -729,9 +729,12 @@
       const select = document.getElementById('imageDesignLinkSelect');
       try {
         select.innerHTML = '<option value="">جارٍ تحميل التصاميم...</option>';
-        const response = await fetch('/api/designs', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-        const designs = await response.json();
-        if (!response.ok) throw new Error(designs.error || 'تعذر تحميل التصاميم');
+        const response = await fetch('/api/agents/admin/designs?limit=100', { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' } });
+        const isJson = (response.headers.get('content-type') || '').includes('application/json');
+        const payload = isJson ? await response.json() : {};
+        const designs = payload.designs || [];
+        if (!isJson) throw new Error('انتهت جلسة الدخول أو تعذر تحميل قائمة التصاميم');
+        if (!response.ok) throw new Error(payload.error || 'تعذر تحميل التصاميم');
         select.innerHTML = '<option value="">-- اختر التصميم --</option>' + (Array.isArray(designs) ? designs : []).map(design => `<option value="${design.Design_ID}" ${Number(design.Design_ID) === Number(currentDesignId) ? 'selected' : ''}>${escapeImageText(design.Name)}</option>`).join('');
         document.getElementById('imageDesignLinkImageId').value = imageId;
         bootstrap.Modal.getOrCreateInstance(document.getElementById('imageDesignLinkModal')).show();
@@ -747,8 +750,10 @@
       const button = document.getElementById('saveImageDesignLinkButton');
       button.disabled = true;
       try {
-        const response = await fetch(`/api/orders/agent/images/${imageId}/link-design`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ design_id: Number(designId) }) });
-        const data = await response.json();
+        const response = await fetch(`/api/agents/admin/images/${imageId}/link-design`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }, body: JSON.stringify({ design_id: Number(designId) }) });
+        const isJson = (response.headers.get('content-type') || '').includes('application/json');
+        const data = isJson ? await response.json() : {};
+        if (!isJson) throw new Error('انتهت جلسة الدخول أو تعذر حفظ الربط');
         if (!response.ok) throw new Error(data.error || 'تعذر حفظ الربط');
         bootstrap.Modal.getOrCreateInstance(document.getElementById('imageDesignLinkModal')).hide();
         loadLibraryImages();
@@ -858,7 +863,7 @@
     }
 
     function unlinkImageFromDesign(id) {
-      fetch(`/api/orders/agent/images/${id}/link-design`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ design_id: null }) })
+      fetch(`/api/agents/admin/images/${id}/link-design`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }, body: JSON.stringify({ design_id: null }) })
         .then(r => r.json()).then(data => { if (data.success) loadLibraryImages(); else alert(data.error || 'فشل فك الارتباط'); });
     }
 

@@ -193,5 +193,13 @@ test('library image cards provide a design-linking control', () => {
   assert.match(admin, /ربط بتصميم/);
   assert.match(admin, /openImageDesignLink/);
   assert.match(admin, /imageDesignLinkModal/);
-  assert.match(admin, /agent\/images\/\$\{imageId\}\/link-design/);
+  assert.match(admin, /agents\/admin\/images\/\$\{imageId\}\/link-design/);
+  assert.match(admin, /agents\/admin\/designs\?limit=100/);
+});
+
+test('an agent order carries each linked ready-design file to the designer', () => {
+  const orders = fs.readFileSync(path.join(__dirname, '..', 'routes', 'orders.js'), 'utf8');
+  assert.match(orders, /copyLinkedDesignToOrder/);
+  assert.match(orders, /SELECT File_Path, Original_Name, Stored_Name, Design_ID FROM Agent_Images/);
+  assert.match(orders, /التصميم المرتبط بالصورة/);
 });

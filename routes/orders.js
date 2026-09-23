@@ -10,7 +10,32 @@ const { deliverOrder } = require('../services/orderAccounting');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 const AGENT_UPLOAD_DIR = path.join(__dirname, '..', 'Server_Storage', 'Agent_Images');
+const DESIGN_STORAGE = path.resolve(__dirname, '..', 'Designs_Storage');
 if (!fs.existsSync(AGENT_UPLOAD_DIR)) fs.mkdirSync(AGENT_UPLOAD_DIR, { recursive: true });
+
+function resolveLinkedDesignFile(design) {
+  if (!design?.FilePath) return null;
+  const candidate = path.resolve(DESIGN_STORAGE, String(design.FilePath));
+  const relative = path.relative(DESIGN_STORAGE, candidate);
+  if (relative.startsWith('..' + path.sep) || path.isAbsolute(relative) || !fs.existsSync(candidate)) return null;
+  return candidate;
+}
+
+function copyLinkedDesignToOrder(taskId, design, uploadedBy) {
+  const source = resolveLinkedDesignFile(design);
+  if (!source) return false;
+  const originalName = path.basename(design.Original_Name || path.basename(source));
+  const destinationDir = path.join(STORAGE, `Task_${taskId}`, 'Linked_Designs');
+  fs.mkdirSync(destinationDir, { recursive: true });
+  const storedName = `linked-design-${design.Design_ID}-${originalName}`;
+  const destination = path.join(destinationDir, storedName);
+  fs.copyFileSync(source, destination);
+  db.run(`INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Upload_Type, Uploaded_By)
+    VALUES (?, ?, ?, ?, ?, ?, 'design', 'design', ?)`,
+    [taskId, originalName, storedName, path.relative(STORAGE, destination), fs.statSync(destination).size,
+      `التصميم المرتبط بالصورة: ${design.Name}`, uploadedBy]);
+  return true;
+}
 
 const agentStorage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, AGENT_UPLOAD_DIR),
@@ -158,14 +183,21 @@ router.post('/', requirePermission('orders'), (req, res) => {
 
   if (isAgent && Image_IDs && Array.isArray(Image_IDs) && Image_IDs.length > 0) {
     let totalSheets = 0;
+    const copiedDesignIds = new Set();
     Image_IDs.forEach(imgId => {
       const qty = Quantities && Quantities[imgId] ? parseFloat(Quantities[imgId]) : 0;
       if (qty > 0) totalSheets += qty;
       // Get the actual file path from Agent_Images table
-      const image = db.get("SELECT File_Path, Original_Name, Stored_Name FROM Agent_Images WHERE Image_ID = ?", [imgId]);
+      const image = db.get("SELECT File_Path, Original_Name, Stored_Name, Design_ID FROM Agent_Images WHERE Image_ID = ?", [imgId]);
       if (image) {
         db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Upload_Type, Uploaded_By) VALUES (?, ?, ?, ?, 'image', 'agent_image', ?)",
           [result.lastId, image.Original_Name, image.Stored_Name || image.Original_Name, image.File_Path, req.session.userId]);
+        if (image.Design_ID && !copiedDesignIds.has(Number(image.Design_ID))) {
+          copiedDesignIds.add(Number(image.Design_ID));
+          const linkedDesign = db.get('SELECT * FROM Designs WHERE Design_ID=?', [image.Design_ID]);
+          try { if (linkedDesign) copyLinkedDesignToOrder(result.lastId, linkedDesign, req.session.userId); }
+          catch (error) { console.error('Copy linked design to order failed:', error.message); }
+        }
       }
     });
     if (totalSheets > 0) {
