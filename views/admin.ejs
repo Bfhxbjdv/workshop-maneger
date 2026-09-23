@@ -191,7 +191,10 @@
         <div class="tab-content d-none" id="tab-ready-designs">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <h4 class="mb-0"><i class="bi bi-files"></i> التصاميم الجاهزة</h4>
-            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#designModal"><i class="bi bi-plus"></i> إضافة تصميم</button>
+            <div class="d-flex gap-2">
+              <a class="btn btn-outline-primary" href="/designs"><i class="bi bi-grid"></i> عرض التصاميم</a>
+              <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#designModal"><i class="bi bi-plus"></i> إضافة تصميم</button>
+            </div>
           </div>
           <div class="card">
             <div class="card-body p-0">
@@ -301,8 +304,9 @@
               <div class="col-md-6"><label class="form-label">الارتفاع</label><input type="number" id="designHeight" class="form-control" step="0.1" placeholder="الارتفاع بالمم"></div>
               <div class="col-md-6"><label class="form-label">الوحدة</label><input type="text" id="designUnit" class="form-control" value="مم"></div>
               <div class="col-12"><label class="form-label">الوصف</label><textarea id="designNotes" class="form-control" rows="2"></textarea></div>
-              <div class="col-md-6"><label class="form-label">ملف التصميم <span class="text-danger">*</span></label><input type="file" id="designFile" class="form-control" accept=".dxf,.plt,.svg,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.ai,.eps,.cdr,.txt" required><div class="form-text">اختر الملف من الكمبيوتر — حتى 25 ميغابايت.</div></div>
+              <div class="col-md-6"><label class="form-label">ملف التصميم <span class="text-danger">*</span></label><input type="file" id="designFile" class="form-control" accept="*/*" required><div class="form-text">اختر أي ملف من الكمبيوتر — حتى 25 ميغابايت.</div></div>
               <div class="col-md-6"><label class="form-label">صورة مصغرة (اختيارية)</label><input type="file" id="designThumbnail" class="form-control" accept="image/*"></div>
+              <div class="col-12"><div id="designUploadPreview" class="border rounded bg-light p-2 d-none align-items-center gap-3"></div></div>
               <div class="col-md-6"><label class="form-label">كلمة مرور (اختياري)</label><input type="password" id="designPassword" class="form-control"></div>
             </div>
           </div>
@@ -886,8 +890,14 @@
       submit.disabled = true;
       submit.textContent = 'جارٍ رفع التصميم...';
       try {
-        const response = await fetch('/api/designs', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body: formData });
-        const data = await response.json();
+        const response = await fetch('/api/designs', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }, body: formData });
+        const isJson = (response.headers.get('content-type') || '').includes('application/json');
+        const data = isJson ? await response.json() : {};
+        if (response.status === 401 || data.login) {
+          alert('انتهت جلسة الدخول بعد إعادة تشغيل الموقع. سجّل الدخول مجددًا ثم أعد الرفع.');
+          window.location.href = '/login';
+          return;
+        }
         if (!response.ok || !data.success) return alert(data.error || 'تعذر رفع التصميم');
         bootstrap.Modal.getOrCreateInstance(document.getElementById('designModal')).hide();
         event.currentTarget.reset();
@@ -895,6 +905,36 @@
         loadDesigns();
       } catch (error) { console.error(error); alert('تعذر رفع التصميم. تحقق من الاتصال وحاول مجددًا'); }
       finally { submit.disabled = false; submit.innerHTML = '<i class="bi bi-check-lg"></i> حفظ ورفع التصميم'; }
+    }
+
+    function previewReadyDesignFile() {
+      const file = document.getElementById('designFile').files[0];
+      const preview = document.getElementById('designUploadPreview');
+      preview.replaceChildren();
+      preview.classList.toggle('d-none', !file);
+      if (!file) return;
+
+      const extension = (file.name.split('.').pop() || 'FILE').toUpperCase();
+      const icon = document.createElement('i');
+      icon.className = file.type.startsWith('image/') ? 'bi bi-image fs-2 text-primary' : 'bi bi-file-earmark-richtext fs-2 text-primary';
+      preview.appendChild(icon);
+      if (file.type.startsWith('image/')) {
+        const image = document.createElement('img');
+        image.src = URL.createObjectURL(file);
+        image.alt = 'معاينة الملف المختار';
+        image.style.cssText = 'width:72px;height:56px;object-fit:contain;background:#fff;border:1px solid #dee2e6;border-radius:4px';
+        image.onload = () => URL.revokeObjectURL(image.src);
+        preview.appendChild(image);
+      }
+      const details = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'fw-semibold text-break';
+      title.textContent = file.name;
+      const meta = document.createElement('small');
+      meta.className = 'text-muted';
+      meta.textContent = `امتداد ${extension} — ${(file.size / 1024).toFixed(1)} كيلوبايت. ستظهر المعاينة المرئية للصور وPDF وSVG وDXF وPLT، وبطاقة ملف لبقية الأنواع.`;
+      details.append(title, meta);
+      preview.appendChild(details);
     }
 
     // ============ CUSTOM REQUESTS ============
@@ -1171,6 +1211,7 @@
     refreshPendingBadge();
     document.getElementById('uploadAdminImagesButton').addEventListener('click', uploadAdminImages);
     document.getElementById('uploadImageFiles').addEventListener('change', previewChosenImages);
+    document.getElementById('designFile').addEventListener('change', previewReadyDesignFile);
     document.getElementById('productPricingForm').addEventListener('submit', saveProductPricing);
     document.getElementById('designForm').addEventListener('submit', saveReadyDesign);
 

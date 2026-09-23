@@ -125,8 +125,8 @@
               </div>
               <div class="col-md-6">
                 <label class="form-label">ملف التصميم <span class="text-danger">*</span></label>
-                <input type="file" id="dFile" class="form-control" accept=".dxf,.cdr,.plt,.ai,.svg,.pdf,.eps,.png,.jpg,.jpeg,.gif,.webp,.bmp,.txt" required>
-                <div class="form-text">يدعم: DXF , CDR , PLT , AI , SVG , PDF , صور... يُعرض داخل الموقع مهما كان الامتداد</div>
+                <input type="file" id="dFile" class="form-control" accept="*/*" required>
+                <div class="form-text">يمكن رفع أي امتداد. تُعرض الملفات المدعومة داخل المتصفح مباشرة، وتظهر بطاقة تعريف وتحميل آمن لبقية الأنواع.</div>
               </div>
               <div class="col-md-6">
                 <label class="form-label">صورة مميزة (اختياري - تُولَّد تلقائياً إن تركتها فارغة)</label>
@@ -168,9 +168,8 @@
           <p class="text-muted small"><i class="bi bi-lightbulb"></i> اختر عدة ملفات (أي امتداد)، يتم توليد معاينة تلقائية لكل ملف داخل الموقع، ودوّن ملاحظات لكل تصميم.</p>
           <div class="mb-3">
             <label class="form-label">الملفات <span class="text-danger">*</span></label>
-            <input type="file" id="batchFiles" class="form-control" multiple
-              accept=".dxf,.cdr,.plt,.ai,.svg,.pdf,.eps,.png,.jpg,.jpeg,.gif,.webp,.bmp,.txt">
-            <div class="form-text">يمكنك اختيار أكثر من ملف بامتدادات مختلفة</div>
+            <input type="file" id="batchFiles" class="form-control" multiple accept="*/*">
+            <div class="form-text">يمكنك اختيار أكثر من ملف بأي امتدادات</div>
           </div>
           <div id="batchPreview" class="row g-2"></div>
           <hr>

@@ -9,12 +9,35 @@ const { requireAuth, requirePermission, canAccessOrder } = require('../middlewar
 
 const STORAGE = path.join(__dirname, '..', 'Designs_Storage');
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
-const DESIGN_EXTENSIONS = new Set(['.dxf', '.plt', '.svg', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ai', '.eps', '.cdr', '.txt']);
-const upload = multer({
-  dest: path.join(__dirname, '..', 'uploads'),
-  limits: { fileSize: 25 * 1024 * 1024, files: 2 },
-  fileFilter: (req, file, cb) => cb(null, DESIGN_EXTENSIONS.has(path.extname(file.originalname || '').toLowerCase()))
-});
+// Design files are kept outside the public directory and are only read through
+// authenticated routes below.  Therefore a workshop can store any design
+// format (including formats the browser cannot render), without exposing the
+// server as a public file host.
+function makeUpload(maxFiles) {
+  return multer({
+    dest: path.join(__dirname, '..', 'uploads'),
+    limits: { fileSize: 25 * 1024 * 1024, files: maxFiles }
+  });
+}
+
+function uploadFields(fields, maxFiles) {
+  const middleware = makeUpload(maxFiles).fields(fields);
+  return (req, res, next) => middleware(req, res, error => {
+    if (!error) return next();
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'حجم كل ملف يجب ألا يتجاوز 25 ميغابايت' });
+    }
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_COUNT') {
+      return res.status(400).json({ error: 'عدد الملفات المحدد أكبر من المسموح' });
+    }
+    console.error('Design upload error:', error);
+    return res.status(400).json({ error: 'تعذر قراءة الملف المرفوع: ' + (error.message || 'خطأ غير معروف') });
+  });
+}
+
+const singleDesignUpload = uploadFields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }], 2);
+const batchDesignUpload = uploadFields([{ name: 'files', maxCount: 50 }, { name: 'thumbs', maxCount: 50 }], 100);
+const thumbnailUpload = uploadFields([{ name: 'thumbnail', maxCount: 1 }], 1);
 
 const MIME_MAP = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
@@ -134,14 +157,14 @@ router.get('/:id', requireAuth(), (req, res) => {
 });
 
 // ---------- CREATE (admin) ----------
-router.post('/', requirePermission('admin'), upload.fields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), (req, res) => {
+router.post('/', requirePermission('admin'), singleDesignUpload, (req, res) => {
   try {
     const { Name, Category, Material, Thickness, Width, Height, Unit, Notes, Password } = req.body;
     if (!Name || !req.files?.file?.[0]) return res.status(400).json({ error: 'الاسم والملف مطلوبان' });
 
     const designDir = ensureDir(path.join(STORAGE, `design_${Date.now()}`));
     const uploaded = req.files.file[0];
-    const origName = uploaded.originalname;
+    const origName = path.basename(uploaded.originalname || 'design-file');
     const filePath = path.join(designDir, origName);
     fs.renameSync(uploaded.path, filePath);
     const relPath = normalizeRelativeDesignPath(path.relative(STORAGE, filePath));
@@ -164,7 +187,7 @@ router.post('/', requirePermission('admin'), upload.fields([{ name: 'file', maxC
 });
 
 // ---------- BATCH CREATE (admin) ----------
-router.post('/batch', requirePermission('admin'), upload.fields([{ name: 'files', maxCount: 50 }, { name: 'thumbs', maxCount: 50 }]), (req, res) => {
+router.post('/batch', requirePermission('admin'), batchDesignUpload, (req, res) => {
   try {
     let items = [];
     try { items = JSON.parse(req.body.items || '[]'); } catch (e) {}
@@ -182,7 +205,7 @@ router.post('/batch', requirePermission('admin'), upload.fields([{ name: 'files'
         if (!name) { errors.push(`الملف ${i + 1}: الاسم مطلوب`); continue; }
 
         const designDir = ensureDir(path.join(STORAGE, `design_${Date.now()}_${i}`));
-        const origName = uploaded.originalname;
+        const origName = path.basename(uploaded.originalname || `design-${i + 1}`);
         const filePath = path.join(designDir, origName);
         fs.renameSync(uploaded.path, filePath);
 
@@ -213,7 +236,7 @@ router.post('/batch', requirePermission('admin'), upload.fields([{ name: 'files'
 });
 
 // ---------- UPDATE (admin) ----------
-router.put('/:id', requirePermission('admin'), upload.fields([{ name: 'thumbnail', maxCount: 1 }]), (req, res) => {
+router.put('/:id', requirePermission('admin'), thumbnailUpload, (req, res) => {
   try {
     const d = db.get("SELECT * FROM Designs WHERE Design_ID=?", [req.params.id]);
     if (!d) return res.status(404).json({ error: 'التصميم غير موجود' });
