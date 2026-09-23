@@ -116,3 +116,13 @@ test('admin and agent templates render with valid inline JavaScript', () => {
     assert.match(html, /object-fit:\s*contain/);
   }
 });
+
+test('adding an agent client uses a resilient modal close path', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'views', 'agent.ejs'), 'utf8');
+  assert.match(source, /bootstrap\.Modal\.getOrCreateInstance\(modalElement\)/);
+  assert.match(source, /modal\.hide\(\)/);
+  assert.match(source, /hidden\.bs\.modal/);
+  assert.match(source, /clearStuckModalBackdrop/);
+  assert.match(source, /newClientForm.*addEventListener\('submit', addNewClient\)/s);
+  assert.match(source, /saveNewClientButton/);
+});

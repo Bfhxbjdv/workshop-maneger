@@ -187,19 +187,21 @@
 </div>
 </div>
 </div>
-  <div class="modal fade" id="newClientModal">
+  <div class="modal fade" id="newClientModal" tabindex="-1" aria-labelledby="newClientModalTitle" aria-hidden="true">
     <div class="modal-dialog">
       <div class="modal-content">
-        <div class="modal-header"><h5>عميل جديد</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-        <div class="modal-body">
-          <div class="mb-2"><label class="form-label">الاسم <span class="text-danger">*</span></label><input type="text" id="newClientName" class="form-control" required></div>
-          <div class="mb-2"><label class="form-label">رقم الهاتف</label><input type="text" id="newClientPhone" class="form-control"></div>
-          <div class="mb-2"><label class="form-label">ملاحظات</label><textarea id="newClientNotes" class="form-control" rows="2"></textarea></div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-          <button class="btn btn-primary" onclick="addNewClient()">حفظ واختيار</button>
-        </div>
+        <form id="newClientForm" novalidate>
+          <div class="modal-header"><h5 id="newClientModalTitle">عميل جديد</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button></div>
+          <div class="modal-body">
+            <div class="mb-2"><label class="form-label">الاسم <span class="text-danger">*</span></label><input type="text" id="newClientName" class="form-control" required></div>
+            <div class="mb-2"><label class="form-label">رقم الهاتف</label><input type="text" id="newClientPhone" class="form-control"></div>
+            <div class="mb-2"><label class="form-label">ملاحظات</label><textarea id="newClientNotes" class="form-control" rows="2"></textarea></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+            <button type="submit" class="btn btn-primary" id="saveNewClientButton">حفظ واختيار</button>
+          </div>
+        </form>
       </div>
     </div>
   </div>
@@ -432,24 +434,49 @@
       updateSubmitButton();
     }
 
-    function addNewClient() {
+    function clearStuckModalBackdrop() {
+      if (document.querySelector('.modal.show')) return;
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('padding-right');
+      document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
+    }
+
+    function closeNewClientModal() {
+      const modalElement = document.getElementById('newClientModal');
+      const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+      modalElement.addEventListener('hidden.bs.modal', clearStuckModalBackdrop, { once: true });
+      modal.hide();
+      // Bootstrap normally removes this itself. This only covers an interrupted
+      // animation, which was leaving the page unusable after saving a client.
+      window.setTimeout(clearStuckModalBackdrop, 500);
+    }
+
+    async function addNewClient(event) {
+      event?.preventDefault();
       const name = document.getElementById('newClientName').value.trim();
       const phone = document.getElementById('newClientPhone').value.trim();
       const notes = document.getElementById('newClientNotes').value.trim();
       if (!name) return alert('الاسم مطلوب');
-      fetch('/api/clients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ Full_Name: name, Phone_Number: phone, Notes: notes })
-      }).then(r => r.json()).then(data => {
+      const button = document.getElementById('saveNewClientButton');
+      if (button.disabled) return;
+      button.disabled = true;
+      button.textContent = 'جارٍ الحفظ...';
+      try {
+        const response = await fetch('/api/clients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: JSON.stringify({ Full_Name: name, Phone_Number: phone, Notes: notes })
+        });
+        const data = await response.json();
         if (data.Client_ID) {
           selectClient(data.Client_ID, name);
-          bootstrap.Modal.getInstance(document.getElementById('newClientModal')).hide();
+          closeNewClientModal();
           document.getElementById('newClientName').value = '';
           document.getElementById('newClientPhone').value = '';
           document.getElementById('newClientNotes').value = '';
         } else alert(data.error || 'فشل الإضافة');
-      }).catch(e => { console.error(e); alert('خطأ'); });
+      } catch (e) { console.error(e); alert('تعذر حفظ العميل. تحقق من الاتصال وحاول مجدداً'); }
+      finally { button.disabled = false; button.textContent = 'حفظ واختيار'; }
     }
 
     // Load recent orders
@@ -561,6 +588,8 @@
     });
 
     // Init
+    document.getElementById('newClientForm').addEventListener('submit', addNewClient);
+    document.getElementById('newClientModal').addEventListener('hidden.bs.modal', clearStuckModalBackdrop);
     loadImages();
     loadPricing();
     loadMyOrders();
