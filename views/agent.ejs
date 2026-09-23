@@ -10,7 +10,7 @@
   <style>
     .image-card { transition: all 0.2s; cursor: pointer; }
     .image-card.selected { border: 3px solid #0d6efd; box-shadow: 0 0 0 1px #0d6efd; }
-    .image-card img { height: 180px; object-fit: cover; }
+    .image-card img { height: 180px; object-fit: contain; background: #f8f9fa; }
     .qty-input { width: 80px; }
     .sticky-footer { position: sticky; bottom: 0; background: white; border-top: 1px solid #dee2e6; padding: 1rem; z-index: 100; }
     .pricing-card { transition: all 0.2s; cursor: pointer; border: 2px solid transparent; }
@@ -234,6 +234,10 @@
       } catch (e) { console.error('loadPricing:', e); }
     }
 
+    function escapeImageText(value) {
+      return String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+    }
+
     function renderImages() {
       const grid = document.getElementById('imagesGrid');
       if (!allImages.length) {
@@ -247,13 +251,14 @@
         col.className = 'col-6 col-md-4 col-lg-3';
         col.innerHTML = `
           <div class="card h-100 image-card ${isSelected ? 'selected' : ''}" onclick="toggleImage(${img.Image_ID}, this)">
-            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${img.Original_Name}" class="card-img-top" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
-            <div class="d-flex align-items-center justify-content-center bg-light" style="height:180px; display:none;">
-              <i class="bi bi-image text-muted" style="font-size:3rem"></i>
+            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${escapeImageText(img.Original_Name)}" class="card-img-top" onerror="this.classList.add('d-none'); this.nextElementSibling.classList.remove('d-none')">
+            <div class="d-none d-flex align-items-center justify-content-center bg-light text-muted" style="height:180px;">
+              الصورة غير متاحة — يرجى إعادة رفعها
             </div>
             <div class="card-body p-2">
-              <small class="text-truncate d-block fw-bold">${img.Original_Name}</small>
-              <span class="badge bg-secondary">${img.Category}</span>
+              <small class="text-truncate d-block fw-bold">${escapeImageText(img.Original_Name)}</small>
+              <span class="badge bg-secondary">${escapeImageText(img.Category)}</span>
+              <a href="/api/orders/agent/images/${img.Image_ID}/file" target="_blank" rel="noopener" class="d-block mt-2" onclick="event.stopPropagation()">عرض الصورة كاملة</a>
             </div>
             ${isSelected ? '<div class="position-absolute top-0 end-0 m-2 badge bg-primary rounded-pill"><i class="bi bi-check-lg"></i></div>' : ''}
           </div>
@@ -359,7 +364,7 @@
         col.innerHTML = `
           <div class="card border-secondary">
             <div class="card-body p-2 d-flex align-items-center gap-2">
-              <img src="/api/orders/agent/images/${id}/file" style="width:50px;height:50px;object-fit:cover;border-radius:4px" onerror="this.style.display='none'">
+              <img src="/api/orders/agent/images/${id}/file" style="width:50px;height:50px;object-fit:contain;border-radius:4px" onerror="this.style.display='none'">
               <div class="flex-grow-1">
                 <small class="fw-bold">${img.Original_Name}</small>
                 <small class="text-muted d-block">${img.Category}</small>

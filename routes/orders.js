@@ -4,7 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const db = require('../database/connection');
-const { requireAuth, requirePermission, canAccessOrder, orderScope } = require('../middleware/auth');
+const { requireAuth, requirePermission, canAccessOrder, orderScope, hasPermission } = require('../middleware/auth');
+const { resolveLibraryImage, imageHeaders } = require('../services/localFiles');
 const { deliverOrder } = require('../services/orderAccounting');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
@@ -18,7 +19,18 @@ const agentStorage = multer.diskStorage({
     cb(null, unique + path.extname(file.originalname));
   }
 });
-const agentUpload = multer({ storage: agentStorage, limits: { fileSize: 10 * 1024 * 1024 } });
+const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif', '.ico']);
+const agentUpload = multer({
+  storage: agentStorage,
+  limits: { fileSize: 10 * 1024 * 1024, files: 50 },
+  fileFilter: (req, file, cb) => {
+    if (!imageExtensions.has(path.extname(file.originalname).toLowerCase())) {
+      return cb(new Error('صيغة غير قابلة للمعاينة. استخدم PNG أو JPG أو GIF أو WEBP أو SVG أو BMP أو AVIF أو ICO'));
+    }
+    cb(null, true);
+  }
+});
+const uploadLibraryImages = agentUpload.array('images');
 
 // Helper: filter clients by agent
 function getClientsForUser(req) {
@@ -132,7 +144,7 @@ router.post('/', requirePermission('orders'), (req, res) => {
       const qty = Quantities && Quantities[imgId] ? parseFloat(Quantities[imgId]) : 0;
       if (qty > 0) totalSheets += qty;
       // Get the actual file path from Agent_Images table
-      const image = db.get("SELECT File_Path, Original_Name FROM Agent_Images WHERE Image_ID = ?", [imgId]);
+      const image = db.get("SELECT File_Path, Original_Name, Stored_Name FROM Agent_Images WHERE Image_ID = ?", [imgId]);
       if (image) {
         db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Upload_Type, Uploaded_By) VALUES (?, ?, ?, ?, 'image', 'agent_image', ?)",
           [result.lastId, image.Original_Name, image.Stored_Name || image.Original_Name, image.File_Path, req.session.userId]);
@@ -445,7 +457,14 @@ router.get('/:id/receipt/pdf', requireAuth(), async (req, res) => {
 module.exports = router;
 
 // Agent Image Management
-router.post('/agent/images', requirePermission('orders'), agentUpload.array('images'), (req, res) => {
+router.post('/agent/images', requirePermission('orders'), (req, res, next) => {
+  uploadLibraryImages(req, res, err => {
+    if (!err) return next();
+    const message = err.code === 'LIMIT_FILE_SIZE' ? 'حجم الصورة يتجاوز 10 ميغابايت' :
+      err.code === 'LIMIT_FILE_COUNT' ? 'الحد الأقصى 50 صورة في المرة الواحدة' : err.message;
+    res.status(400).json({ error: message });
+  });
+}, (req, res) => {
   if (req.session.role !== 'Agent' && req.session.role !== 'Admin' && !(req.session.role === 'Custom' && hasPermission(req, 'orders'))) {
     return res.status(403).json({ error: 'غير مصرح' });
   }
@@ -475,6 +494,17 @@ router.get('/agent/images', requirePermission('orders'), (req, res) => {
   sql += ' ORDER BY Created_At DESC';
   const images = db.all(sql, params);
   res.json({ images });
+});
+
+router.get('/agent/images/:id/file', requirePermission('orders'), (req, res) => {
+  const image = db.get('SELECT * FROM Agent_Images WHERE Image_ID = ?', [req.params.id]);
+  const filePath = image && resolveLibraryImage(image);
+  if (!filePath) return res.status(404).json({ error: 'ملف الصورة غير موجود على التخزين، يرجى رفعه مجدداً' });
+  if (!imageExtensions.has(path.extname(filePath).toLowerCase())) {
+    return res.status(415).json({ error: 'هذا الملف ليس صورة قابلة للمعاينة' });
+  }
+  imageHeaders(res);
+  res.sendFile(filePath);
 });
 
 router.delete('/agent/images/:id', requirePermission('orders'), (req, res) => {

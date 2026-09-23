@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect x="4" y="4" width="632" height="352" rx="20" fill="#eef6ff" stroke="#1768ac" stroke-width="8"/>
+  <circle cx="160" cy="180" r="100" fill="#1768ac"/>
+  <path d="M105 180l40 45 75-90" fill="none" stroke="white" stroke-width="18"/>
+  <text x="440" y="170" text-anchor="middle" font-family="sans-serif" font-size="36" fill="#17415f">IMAGE TEST</text>
+  <text x="440" y="220" text-anchor="middle" font-family="sans-serif" font-size="24" fill="#17415f">640 x 360</text>
+</svg>

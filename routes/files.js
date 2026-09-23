@@ -7,6 +7,7 @@ const { ZipArchive } = require('archiver');
 const db = require('../database/connection');
 const { requireAuth, requirePermission, canAccessOrder } = require('../middleware/auth');
 const gdrive = require('../services/googleDrive');
+const { resolveLocalFile, imageHeaders } = require('../services/localFiles');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 if (!fs.existsSync(STORAGE)) fs.mkdirSync(STORAGE, { recursive: true });
@@ -295,8 +296,8 @@ async function getFileBuffer(file) {
         stream.on('error', reject);
       });
     } else {
-      const fullPath = path.join(STORAGE, file.File_Path);
-      if (!fs.existsSync(fullPath)) return null;
+      const fullPath = resolveLocalFile(file.File_Path);
+      if (!fullPath) return null;
       return fs.readFileSync(fullPath);
     }
   } catch (e) {
@@ -333,8 +334,8 @@ router.get('/image/:fileId', requireAuth(), async (req, res) => {
       if (fileStream) { res.setHeader('Content-Type', 'image/jpeg'); return fileStream.pipe(res); }
     } catch (e) { /* fallback */ }
   } else if (file.File_Path) {
-    const fullPath = path.join(STORAGE, file.File_Path);
-    if (fs.existsSync(fullPath)) return res.sendFile(fullPath);
+    const fullPath = resolveLocalFile(file.File_Path);
+    if (fullPath) { imageHeaders(res); return res.sendFile(fullPath); }
   }
   res.status(404).json({ error: 'الصورة غير موجودة' });
 });
@@ -362,8 +363,8 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
           if (stream) archive.append(stream, { name: file.Original_Name });
         } catch (e) { console.error('ZIP append gdrive error:', e); }
       } else if (file.File_Path) {
-        const fullPath = path.join(STORAGE, file.File_Path);
-        if (fs.existsSync(fullPath)) archive.file(fullPath, { name: file.Original_Name });
+        const fullPath = resolveLocalFile(file.File_Path);
+        if (fullPath) archive.file(fullPath, { name: file.Original_Name });
       }
     }
 
@@ -385,8 +386,8 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
       } catch (e) { /* fallback */ }
     }
     if (file.File_Path) {
-      const fullPath = path.join(STORAGE, file.File_Path);
-      if (fs.existsSync(fullPath)) return res.download(fullPath, file.Original_Name);
+      const fullPath = resolveLocalFile(file.File_Path);
+      if (fullPath) return res.download(fullPath, file.Original_Name);
     }
   }
 
@@ -401,14 +402,14 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
           return;
         }
       } catch (e) {
-        const localPath = path.join(STORAGE, order.File_Path);
-        if (fs.existsSync(localPath)) return res.download(localPath, order.File_Name);
+        const localPath = resolveLocalFile(order.File_Path);
+        if (localPath) return res.download(localPath, order.File_Name);
         res.status(500).json({ error: 'خطأ في تحميل الملف من Google Drive' });
       }
       return;
     }
-    const filePath = path.join(STORAGE, order.File_Path);
-    if (fs.existsSync(filePath)) return res.download(filePath, order.File_Name || `task_${order.Task_ID}.dxf`);
+    const filePath = resolveLocalFile(order.File_Path);
+    if (filePath) return res.download(filePath, order.File_Name || `task_${order.Task_ID}.dxf`);
   }
 
   res.status(404).json({ error: 'لا توجد ملفات لهذا الطلب' });
@@ -432,8 +433,8 @@ router.get('/download-file/:fileId', requireAuth(), async (req, res) => {
   }
 
   if (file.File_Path) {
-    const fullPath = path.join(STORAGE, file.File_Path);
-    if (fs.existsSync(fullPath)) return res.download(fullPath, file.Original_Name);
+    const fullPath = resolveLocalFile(file.File_Path);
+    if (fullPath) return res.download(fullPath, file.Original_Name);
   }
 
   res.status(404).json({ error: 'الملف غير موجود على القرص' });

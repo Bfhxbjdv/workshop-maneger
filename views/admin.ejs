@@ -312,7 +312,9 @@
             </div>
             <div class="mb-2">
               <label class="form-label">الصور (يمكن اختيار عدة ملفات)</label>
-              <input type="file" id="uploadImageFiles" name="images" class="form-control" accept="image/*" multiple required>
+              <input type="file" id="uploadImageFiles" name="images" class="form-control" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.avif,.ico" multiple required>
+              <div class="form-text">حتى 50 صورة، بحد أقصى 10 ميغابايت للصورة.</div>
+              <div id="uploadImagePreviews" class="row g-2 mt-2" aria-live="polite"></div>
             </div>
           </div>
           <div class="modal-footer">
@@ -621,6 +623,10 @@
       renderLibraryImages(d.images || []);
     }
 
+    function escapeImageText(value) {
+      return String(value || '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+    }
+
     function renderLibraryImages(images) {
       const grid = document.getElementById('libraryImagesGrid');
       if (!images.length) {
@@ -631,21 +637,51 @@
       images.forEach(img => {
         const col = document.createElement('div');
         col.className = 'col-6 col-md-4 col-lg-3';
-        const hasDesign = img.Design_ID ? `<span class="badge bg-success">مرتبط بتصميم: ${img.Design_Name}</span>` : '<span class="badge bg-secondary">مكتبة مستقلة</span>';
+        const hasDesign = img.Design_ID ? `<span class="badge bg-success">مرتبط بتصميم: ${escapeImageText(img.Design_Name)}</span>` : '<span class="badge bg-secondary">مكتبة مستقلة</span>';
         col.innerHTML = `
           <div class="card h-100">
-            <img src="/api/orders/agent/images/${img.Image_ID}/file" class="card-img-top" style="height:180px;object-fit:cover" onerror="this.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBmaWxsPSIjZWVlIi8+PHRleHQgeD0iMzIiIHk9IjMyIiBmb250LXNpemU9IjE0IiBmaWxsPSIjOTk5IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIj7YqQ=='">
+            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${escapeImageText(img.Original_Name)}" class="card-img-top bg-light" style="height:180px;object-fit:contain" onerror="this.classList.add('d-none'); this.nextElementSibling.classList.remove('d-none')">
+            <div class="d-none d-flex align-items-center justify-content-center bg-light text-muted" style="height:180px">الصورة غير متاحة — يرجى إعادة رفعها</div>
             <div class="card-body p-2">
-              <small class="text-truncate d-block fw-bold">${img.Original_Name}</small>
-              <span class="badge bg-secondary">${img.Category}</span>
+              <small class="text-truncate d-block fw-bold">${escapeImageText(img.Original_Name)}</small>
+              <span class="badge bg-secondary">${escapeImageText(img.Category)}</span>
               ${hasDesign}
             </div>
             <div class="card-footer p-2 d-flex gap-1">
+              <a href="/api/orders/agent/images/${img.Image_ID}/file" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary flex-fill">عرض كامل</a>
               ${img.Design_ID ? `<button class="btn btn-sm btn-outline-secondary flex-fill" onclick="unlinkImageFromDesign(${img.Image_ID})"><i class="bi bi-link-45deg"></i> فك الارتباط</button>` : ''}
               <button class="btn btn-sm btn-outline-danger flex-fill" onclick="deleteLibraryImage(${img.Image_ID})"><i class="bi bi-trash"></i> حذف</button>
             </div>
           </div>
         `;
+        grid.appendChild(col);
+      });
+    }
+
+    let uploadPreviewUrls = [];
+    function clearUploadPreviews() {
+      uploadPreviewUrls.forEach(url => URL.revokeObjectURL(url));
+      uploadPreviewUrls = [];
+      document.getElementById('uploadImagePreviews').replaceChildren();
+    }
+    function previewChosenImages() {
+      clearUploadPreviews();
+      const grid = document.getElementById('uploadImagePreviews');
+      Array.from(document.getElementById('uploadImageFiles').files || []).slice(0, 50).forEach(file => {
+        const url = URL.createObjectURL(file);
+        uploadPreviewUrls.push(url);
+        const col = document.createElement('div');
+        col.className = 'col-6';
+        const image = document.createElement('img');
+        image.src = url;
+        image.alt = file.name;
+        image.className = 'w-100 bg-light rounded';
+        image.style.cssText = 'height:120px;object-fit:contain';
+        const caption = document.createElement('small');
+        caption.className = 'd-block text-break';
+        caption.textContent = file.name;
+        image.onerror = () => { image.hidden = true; caption.textContent = file.name + ' — لا يمكن معاينة هذه الصورة'; };
+        col.append(image, caption);
         grid.appendChild(col);
       });
     }
@@ -657,6 +693,14 @@
         alert('الرجاء اختيار صورة واحدة على الأقل');
         return;
       }
+      if (files.length > 50 || files.some(file => file.size > 10 * 1024 * 1024)) {
+        alert('اختر حتى 50 صورة، بحد أقصى 10 ميغابايت للصورة');
+        return;
+      }
+      const button = document.getElementById('uploadAdminImagesButton');
+      if (button.disabled) return;
+      button.disabled = true;
+      button.textContent = 'جارٍ الرفع...';
       const formData = new FormData();
       formData.append('category', document.getElementById('uploadImageCategory').value);
       files.forEach(file => formData.append('images', file, file.name));
@@ -666,9 +710,11 @@
         if (data.success) {
           bootstrap.Modal.getInstance(document.getElementById('uploadImageModal')).hide();
           form.reset();
+          clearUploadPreviews();
           loadLibraryImages();
         } else { alert(data.error || 'فشل الرفع'); }
-      } catch (e) { alert('خطأ في الرفع'); }
+      } catch (e) { alert('تعذر الرفع. تحقق من الاتصال وحاول مجدداً'); }
+      finally { button.disabled = false; button.textContent = 'رفع'; }
     }
 
     function deleteLibraryImage(id) {
@@ -1002,6 +1048,7 @@
     loadAdminStats();
     refreshPendingBadge();
     document.getElementById('uploadAdminImagesButton').addEventListener('click', uploadAdminImages);
+    document.getElementById('uploadImageFiles').addEventListener('change', previewChosenImages);
 
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>
