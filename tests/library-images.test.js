@@ -213,3 +213,13 @@ test('admin can preview agent order and custom request attachments', () => {
   assert.match(agents, /custom-requests\/:id\/files/);
   assert.match(localFiles, /customDesignRoot/);
 });
+
+test('cut completion deducts inventory once and keeps only the latest design file current', () => {
+  const accounting = fs.readFileSync(path.join(__dirname, '..', 'services', 'orderAccounting.js'), 'utf8');
+  const files = fs.readFileSync(path.join(__dirname, '..', 'routes', 'files.js'), 'utf8');
+  const orders = fs.readFileSync(path.join(__dirname, '..', 'routes', 'orders.js'), 'utf8');
+  assert.match(accounting, /deductInventoryForCut/);
+  assert.match(accounting, /Inventory_Deducted_At/);
+  assert.match(files, /Is_Current=0/);
+  assert.match(orders, /Quantity_Unit/);
+});

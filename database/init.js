@@ -42,6 +42,8 @@ async function initDatabase() {
       Status TEXT NOT NULL DEFAULT 'قيد التصميم' CHECK(Status IN ('قيد التصميم','جاهز للقص','قيد التنفيذ','تم الانتهاء من القص','تم التغليف','تم التسليم')),
       Material_ID INTEGER,
       Material_Qty REAL DEFAULT 0,
+      Quantity_Unit TEXT DEFAULT 'لوح',
+      Inventory_Deducted_At DATETIME,
       Price REAL DEFAULT 0,
       Cost REAL DEFAULT 0,
       Profit REAL DEFAULT 0,
@@ -390,6 +392,7 @@ async function initDatabase() {
       File_Size REAL DEFAULT 0,
       Label TEXT DEFAULT '',
       File_Type TEXT DEFAULT 'design',
+      Is_Current INTEGER DEFAULT 1,
       Uploaded_By INTEGER,
       Created_At DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (Task_ID) REFERENCES Orders(Task_ID) ON DELETE CASCADE,
@@ -433,6 +436,9 @@ async function initDatabase() {
     console.log('✅ Added Agent_Approved_By column to Orders');
   } catch (e) {}
 
+  try { db.exec("ALTER TABLE Orders ADD COLUMN Quantity_Unit TEXT DEFAULT 'لوح'"); } catch (e) {}
+  try { db.exec("ALTER TABLE Orders ADD COLUMN Inventory_Deducted_At DATETIME"); } catch (e) {}
+
   try {
     db.exec("ALTER TABLE Agent_Images ADD COLUMN Design_ID INTEGER REFERENCES Designs(Design_ID)");
     console.log('✅ Added Design_ID column to Agent_Images');
@@ -460,6 +466,7 @@ async function initDatabase() {
     if (!fileCols.some(c => c.name === 'Label')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Label TEXT DEFAULT ''"); console.log('✅ Added Label column'); }
     if (!fileCols.some(c => c.name === 'File_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN File_Type TEXT DEFAULT 'design'"); console.log('✅ Added File_Type column'); }
     if (!fileCols.some(c => c.name === 'Upload_Type')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Upload_Type TEXT DEFAULT 'design' CHECK(Upload_Type IN ('design', 'agent_custom', 'admin_library', 'agent_image', 'agent_shape'))"); console.log('✅ Added Upload_Type column'); }
+    if (!fileCols.some(c => c.name === 'Is_Current')) { db.exec("ALTER TABLE Order_Files ADD COLUMN Is_Current INTEGER DEFAULT 1"); }
   } catch (e) {}
 
   try {
@@ -519,6 +526,8 @@ async function initDatabase() {
         Approval_Status TEXT DEFAULT 'approved' CHECK(Approval_Status IN ('pending','approved','rejected')),
         Material_ID INTEGER,
         Material_Qty REAL DEFAULT 0,
+        Quantity_Unit TEXT DEFAULT 'لوح',
+        Inventory_Deducted_At DATETIME,
         Price REAL DEFAULT 0,
         Cost REAL DEFAULT 0,
         Profit REAL DEFAULT 0,

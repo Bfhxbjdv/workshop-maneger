@@ -5,8 +5,8 @@ const fs = require('fs');
 const multer = require('multer');
 const db = require('../database/connection');
 const { requireAuth, requirePermission, canAccessOrder, orderScope, hasPermission } = require('../middleware/auth');
-const { resolveLibraryImage, imageHeaders } = require('../services/localFiles');
-const { deliverOrder } = require('../services/orderAccounting');
+const { resolveLibraryImage, resolveLocalFile, imageHeaders } = require('../services/localFiles');
+const { deliverOrder, deductInventoryForCut } = require('../services/orderAccounting');
 
 const STORAGE = path.join(__dirname, '..', 'Server_Storage', 'Clients_Archive');
 const AGENT_UPLOAD_DIR = path.join(__dirname, '..', 'Server_Storage', 'Agent_Images');
@@ -34,6 +34,29 @@ function copyLinkedDesignToOrder(taskId, design, uploadedBy) {
     VALUES (?, ?, ?, ?, ?, ?, 'design', 'design', ?)`,
     [taskId, originalName, storedName, path.relative(STORAGE, destination), fs.statSync(destination).size,
       `التصميم المرتبط بالصورة: ${design.Name}`, uploadedBy]);
+  return true;
+}
+
+// If this client previously ordered the same library image, prefer the last
+// designer-approved version over the original linked template.
+function copyLatestClientDesign(taskId, clientId, image, uploadedBy) {
+  const previous = db.get(`SELECT f.* FROM Order_Files f
+    JOIN Orders o ON o.Task_ID=f.Task_ID
+    WHERE o.Client_ID=? AND f.File_Type='design' AND COALESCE(f.Is_Current, 1)=1
+      AND EXISTS (SELECT 1 FROM Order_Files i WHERE i.Task_ID=o.Task_ID AND i.File_Type='image' AND i.File_Path=?)
+    ORDER BY f.Created_At DESC LIMIT 1`, [clientId, image.File_Path]);
+  if (!previous || !previous.File_Path || previous.File_Path.startsWith('gdrive://')) return false;
+  const source = resolveLocalFile(previous.File_Path);
+  if (!source) return false;
+  const destinationDir = path.join(STORAGE, `Task_${taskId}`, 'Client_Latest_Designs');
+  fs.mkdirSync(destinationDir, { recursive: true });
+  const storedName = `client-latest-${Date.now()}-${path.basename(previous.Original_Name)}`;
+  const destination = path.join(destinationDir, storedName);
+  fs.copyFileSync(source, destination);
+  db.run(`INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By)
+    VALUES (?, ?, ?, ?, ?, ?, 'design', 1, ?)`,
+    [taskId, previous.Original_Name, storedName, path.relative(STORAGE, destination), fs.statSync(destination).size,
+      'أحدث نسخة محفوظة لهذا العميل', uploadedBy]);
   return true;
 }
 
@@ -140,7 +163,7 @@ router.post('/', requirePermission('orders'), (req, res) => {
   if (!['Admin', 'Designer', 'Custom', 'Agent'].includes(req.session.role)) {
     return res.status(403).json({ error: 'إنشاء الطلبات غير متاح لهذا الدور' });
   }
-  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs, Quantities, Pricing_ID, Material_ID, Agent_Price, Agent_Commission, Final_Price } = req.body;
+  const { Client_ID, Machine_Type, Materials, Notes, Sheets, Shapes, Image_IDs, Quantities, Pricing_ID, Material_ID, Agent_Price, Agent_Commission, Final_Price, Quantity_Unit } = req.body;
   if (!Client_ID || !Machine_Type) return res.status(400).json({ error: 'العميل ونوع الماكينة مطلوبان' });
   const machineType = (Machine_Type || '').toString().toLowerCase() === 'router' ? 'Router' : 'Laser';
 
@@ -151,6 +174,7 @@ router.post('/', requirePermission('orders'), (req, res) => {
   const agentCommission = isAgent ? (parseFloat(Agent_Commission) || 0) : 0;
   let finalPrice = isAgent ? (parseFloat(Final_Price) || agentPrice + agentCommission) : 0;
   const selectedMaterialId = Number(Material_ID);
+  const quantityUnit = Quantity_Unit === 'قطعة' ? 'قطعة' : 'لوح';
   if (isAgent) {
     if (!Pricing_ID || !selectedMaterialId) return res.status(400).json({ error: 'اختر المنتج والخامة قبل إرسال الطلب' });
     const product = db.get('SELECT * FROM Product_Pricing WHERE Pricing_ID=? AND Is_Active=1', [Pricing_ID]);
@@ -172,9 +196,9 @@ router.post('/', requirePermission('orders'), (req, res) => {
   }
 
   const result = db.run(
-    `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes, Agent_Price, Agent_Commission, Final_Price)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [Client_ID, isAgent ? null : req.session.userId, req.session.userId, machineType, initialStatus, approvalStatus, Notes || '', agentPrice, agentCommission, finalPrice]
+    `INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Notes, Agent_Price, Agent_Commission, Final_Price, Quantity_Unit)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [Client_ID, isAgent ? null : req.session.userId, req.session.userId, machineType, initialStatus, approvalStatus, Notes || '', agentPrice, agentCommission, finalPrice, quantityUnit]
   );
 
   if (!result.lastId) return res.status(500).json({ error: 'فشل إنشاء الطلب' });
@@ -192,7 +216,8 @@ router.post('/', requirePermission('orders'), (req, res) => {
       if (image) {
         db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Type, Upload_Type, Uploaded_By) VALUES (?, ?, ?, ?, 'image', 'agent_image', ?)",
           [result.lastId, image.Original_Name, image.Stored_Name || image.Original_Name, image.File_Path, req.session.userId]);
-        if (image.Design_ID && !copiedDesignIds.has(Number(image.Design_ID))) {
+        const copiedClientVersion = copyLatestClientDesign(result.lastId, Client_ID, image, req.session.userId);
+        if (!copiedClientVersion && image.Design_ID && !copiedDesignIds.has(Number(image.Design_ID))) {
           copiedDesignIds.add(Number(image.Design_ID));
           const linkedDesign = db.get('SELECT * FROM Designs WHERE Design_ID=?', [image.Design_ID]);
           try { if (linkedDesign) copyLinkedDesignToOrder(result.lastId, linkedDesign, req.session.userId); }
@@ -259,6 +284,11 @@ router.put('/:id', requirePermission('orders'), (req, res) => {
     return res.status(400).json({ error: 'حالة الطلب غير صالحة' });
   }
 
+  if (Status === 'تم الانتهاء من القص') {
+    const deduction = deductInventoryForCut(req.params.id);
+    if (deduction.error) return res.status(400).json({ error: deduction.error });
+  }
+
   db.run(
     "UPDATE Orders SET Status=COALESCE(?,Status), Material_ID=COALESCE(?,Material_ID), Material_Qty=COALESCE(?,Material_Qty), Notes=COALESCE(?,Notes), Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?",
     [Status || null, Material_ID || null, Material_Qty || null, Notes || null, req.params.id]
@@ -288,6 +318,10 @@ router.put('/:id/status', requirePermission('orders'), (req, res) => {
   } else {
     const allowed = ['قيد التصميم', 'جاهز للقص', 'قيد التنفيذ', 'تم الانتهاء من القص', 'تم التغليف'];
     if (!allowed.includes(Status)) return res.status(400).json({ error: 'حالة الطلب غير صالحة' });
+    if (Status === 'تم الانتهاء من القص') {
+      const deduction = deductInventoryForCut(req.params.id);
+      if (deduction.error) return res.status(400).json({ error: deduction.error });
+    }
     db.run("UPDATE Orders SET Status=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?", [Status, req.params.id]);
   }
 

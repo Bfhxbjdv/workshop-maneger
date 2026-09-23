@@ -135,7 +135,8 @@ router.post('/upload/:taskId', requirePermission('orders'), designUpload.array('
       }
 
       const label = (labels[i] || file.originalname).toString().trim() || file.originalname;
-      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, GDrive_File_ID, File_Size, Label, File_Type, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, ?, 'design', ?)",
+      db.run("UPDATE Order_Files SET Is_Current=0 WHERE Task_ID=? AND File_Type='design'", [taskId]);
+      db.run("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, GDrive_File_ID, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, ?, 'design', 1, ?)",
         [taskId, file.originalname, storedName, filePath, gdriveFileId, file.size, label, req.session.userId]);
 
       if (!firstFilePath) {
@@ -322,7 +323,7 @@ async function getFileBuffer(file) {
 router.get('/list/:taskId', requireAuth(), (req, res) => {
   const order = db.get('SELECT * FROM Orders WHERE Task_ID=?', [req.params.taskId]);
   if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
-  const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_Type, Created_At", [req.params.taskId]);
+  const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_Type, Is_Current DESC, Created_At DESC", [req.params.taskId]);
   res.json(files || []);
 });
 
@@ -358,7 +359,7 @@ router.get('/download/:taskId', requireAuth(), async (req, res) => {
   if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
   if (!canAccessOrder(req, order)) return res.status(403).json({ error: 'لا تملك الصلاحية لهذا الطلب' });
 
-  const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=?", [req.params.taskId]);
+  const files = db.all("SELECT * FROM Order_Files WHERE Task_ID=? AND (File_Type='image' OR COALESCE(Is_Current, 1)=1)", [req.params.taskId]);
 
   if (files && files.length > 1) {
     const zipName = `Task_${order.Task_ID}_${order.Client_Name || 'files'}.zip`;

@@ -1,9 +1,7 @@
 const db = require('../database/connection');
 
-// Delivery is the single accounting transition for an order. Calling it more
-// than once is intentionally idempotent so retries cannot deduct stock twice.
-function validateDelivery(order) {
-  if (order.Status === 'تم التسليم') return null;
+function validateInventory(order) {
+  if (order.Inventory_Deducted_At) return null;
   const materials = db.all('SELECT * FROM Order_Materials WHERE Task_ID=?', [order.Task_ID]);
   for (const material of materials) {
     const inventory = db.get('SELECT * FROM Inventory WHERE Material_ID=?', [material.Material_ID]);
@@ -14,6 +12,29 @@ function validateDelivery(order) {
     if (!inventory || inventory.Quantity < order.Material_Qty) return 'المخزون غير كافٍ للمادة المختارة';
   }
   return null;
+}
+
+function deductInventoryForCut(taskId) {
+  const order = db.get('SELECT * FROM Orders WHERE Task_ID=?', [taskId]);
+  if (!order) return { error: 'الطلب غير موجود' };
+  if (order.Inventory_Deducted_At) return { order, alreadyDeducted: true };
+  const validationError = validateInventory(order);
+  if (validationError) return { error: validationError };
+
+  let totalCost = 0;
+  const materials = db.all('SELECT * FROM Order_Materials WHERE Task_ID=?', [taskId]);
+  for (const material of materials) {
+    const inventory = db.get('SELECT * FROM Inventory WHERE Material_ID=?', [material.Material_ID]);
+    db.run('UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?', [material.Quantity, material.Material_ID]);
+    totalCost += Number(material.Quantity) * Number(inventory.Cost_Per_Unit);
+  }
+  if (!materials.length && order.Material_ID && Number(order.Material_Qty) > 0) {
+    const inventory = db.get('SELECT * FROM Inventory WHERE Material_ID=?', [order.Material_ID]);
+    db.run('UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?', [order.Material_Qty, order.Material_ID]);
+    totalCost = Number(order.Material_Qty) * Number(inventory.Cost_Per_Unit);
+  }
+  db.run('UPDATE Orders SET Cost=?, Inventory_Deducted_At=CURRENT_TIMESTAMP, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?', [totalCost, taskId]);
+  return { order: db.get('SELECT * FROM Orders WHERE Task_ID=?', [taskId]), alreadyDeducted: false };
 }
 
 function deliverOrder(taskId, price) {
@@ -27,20 +48,9 @@ function deliverOrder(taskId, price) {
     return { order: db.get('SELECT * FROM Orders WHERE Task_ID=?', [taskId]), alreadyDelivered: true };
   }
 
-  const validationError = validateDelivery(order);
-  if (validationError) return { error: validationError };
-  let totalCost = 0;
-  const materials = db.all('SELECT * FROM Order_Materials WHERE Task_ID=?', [taskId]);
-  for (const material of materials) {
-    const inventory = db.get('SELECT * FROM Inventory WHERE Material_ID=?', [material.Material_ID]);
-    db.run('UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?', [material.Quantity, material.Material_ID]);
-    totalCost += Number(material.Quantity) * Number(inventory.Cost_Per_Unit);
-  }
-  if (!materials.length && order.Material_ID && Number(order.Material_Qty) > 0) {
-    const inventory = db.get('SELECT * FROM Inventory WHERE Material_ID=?', [order.Material_ID]);
-    db.run('UPDATE Inventory SET Quantity = Quantity - ? WHERE Material_ID=?', [order.Material_Qty, order.Material_ID]);
-    totalCost = Number(order.Material_Qty) * Number(inventory.Cost_Per_Unit);
-  }
+  const deducted = deductInventoryForCut(taskId);
+  if (deducted.error) return deducted;
+  const totalCost = Number(deducted.order.Cost || 0);
 
   const finalPrice = price === undefined ? Number(order.Price || 0) : Number(price);
   // Total_Spent is what the client paid (the price), not what the workshop
@@ -50,4 +60,4 @@ function deliverOrder(taskId, price) {
   return { order: db.get('SELECT * FROM Orders WHERE Task_ID=?', [taskId]), alreadyDelivered: false };
 }
 
-module.exports = { deliverOrder, validateDelivery };
+module.exports = { deliverOrder, validateInventory, deductInventoryForCut };

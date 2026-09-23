@@ -251,7 +251,7 @@ function openUploadModal(taskId) {
 function loadExistingFiles(taskId) {
   fetch(`/api/files/list/${taskId}`).then(r => r.json()).then(files => {
     if (!Array.isArray(files) || files.length === 0) return;
-    const designFiles = files.filter(f => f.File_Type !== 'image');
+    const designFiles = files.filter(f => f.File_Type !== 'image' && Number(f.Is_Current) !== 0);
     const imageFiles = files.filter(f => f.File_Type === 'image');
 
     const container = document.getElementById('existingFilesContainer');
@@ -539,6 +539,7 @@ async function loadLaserOrders() {
     tbody.innerHTML += `<tr>
       <td>${o.Task_ID}</td><td>${o.Client_Name || '---'}</td>
       <td>${o.Material_Name || '-'}</td><td>${o.Thickness || '-'}</td>
+      <td><strong>${o.Material_Qty || 0}</strong> ${o.Quantity_Unit || 'لوح'}</td>
       <td>${o.Notes || '-'}</td>
       <td>${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> تحميل</a>` : '-'}</td>
       <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
@@ -575,6 +576,7 @@ async function loadRouterOrders() {
     tbody.innerHTML += `<tr>
       <td>${o.Task_ID}</td><td>${o.Client_Name || '---'}</td>
       <td>${o.Material_Name || '-'}</td><td>${o.Thickness || '-'}</td>
+      <td><strong>${o.Material_Qty || 0}</strong> ${o.Quantity_Unit || 'لوح'}</td>
       <td>${o.Notes || '-'}</td>
       <td>${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> تحميل</a>` : '-'}</td>
       <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
