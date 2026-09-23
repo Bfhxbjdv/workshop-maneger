@@ -7,7 +7,7 @@ function formatNumber(num) {
 }
 
 function formatCurrency(num) {
-  return formatNumber(num) + ' ريال';
+  return '$' + formatNumber(num) + ' USD';
 }
 
 function formatDate(dateStr) {
@@ -137,7 +137,7 @@ function renderTrendChart(canvasId, data) {
       interaction: { mode: 'index', intersect: false },
       scales: {
         y: { type: 'linear', position: 'left', title: { display: true, text: 'عدد الطلبات' } },
-        y1: { type: 'linear', position: 'right', title: { display: true, text: 'المبلغ (ريال)' }, grid: { drawOnChartArea: false } }
+        y1: { type: 'linear', position: 'right', title: { display: true, text: 'المبلغ (USD)' }, grid: { drawOnChartArea: false } }
       },
       plugins: { legend: { position: 'top' } }
     }
@@ -196,7 +196,7 @@ function renderMonthlyChart(canvasId, data) {
       maintainAspectRatio: false,
       scales: {
         y: { type: 'linear', position: 'left', title: { display: true, text: 'الطلبات' } },
-        y1: { type: 'linear', position: 'right', title: { display: true, text: 'المبلغ (ريال)' }, grid: { drawOnChartArea: false } }
+        y1: { type: 'linear', position: 'right', title: { display: true, text: 'المبلغ (USD)' }, grid: { drawOnChartArea: false } }
       },
       plugins: { legend: { position: 'top' } }
     }
