@@ -177,3 +177,13 @@ test('ready-design cards generate correct previews for DXF, PLT and embedded CDR
   assert.match(script, /props\[10\] = parseFloat\(v\)/);
   assert.match(script, /props\[20\] = parseFloat\(v\)/);
 });
+
+test('batch design thumbnails stay paired with the right file when names repeat', () => {
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'routes', 'designs.js'), 'utf8');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'designs.js'), 'utf8');
+  assert.match(routes, /thumbIndexes/);
+  assert.match(routes, /thumbIndexes\.indexOf\(i\)/);
+  assert.match(script, /const nameCounts = new Map\(\)/);
+  assert.match(script, /thumbIndexes\.push\(i\)/);
+  assert.match(script, /fd\.append\('thumbIndexes'/);
+});

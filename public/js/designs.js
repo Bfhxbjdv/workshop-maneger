@@ -315,11 +315,15 @@ async function onBatchFilesChanged() {
   preview.innerHTML = '';
   batchFileList = Array.from(input.files || []);
   if (!batchFileList.length) return;
+  const nameCounts = new Map();
 
   for (let i = 0; i < batchFileList.length; i++) {
     const file = batchFileList[i];
     const ext = (file.name || '').split('.').pop().toUpperCase();
     const baseName = (file.name || '').replace(/\.[^.]+$/, '');
+    const occurrence = (nameCounts.get(baseName.toLowerCase()) || 0) + 1;
+    nameCounts.set(baseName.toLowerCase(), occurrence);
+    const displayName = occurrence === 1 ? baseName : `${baseName} (${occurrence})`;
     const IMAGE_EXTS = ['PNG','JPG','JPEG','GIF','WEBP','BMP'];
     let thumbSrc = '';
     if (IMAGE_EXTS.includes(ext)) {
@@ -340,7 +344,7 @@ async function onBatchFilesChanged() {
                 ${thumbSrc ? `<img src="${thumbSrc}" style="width:100%;height:100%;object-fit:cover" alt="">` : `<span class="text-muted small">${ext}</span>`}
               </div>
               <div class="flex-grow-1">
-                <input type="text" class="form-control form-control-sm mb-1 batch-name" value="${baseName.replace(/"/g, '&quot;')}" placeholder="اسم التصميم">
+                <input type="text" class="form-control form-control-sm mb-1 batch-name" value="${displayName.replace(/"/g, '&quot;')}" placeholder="اسم التصميم">
                 <textarea class="form-control form-control-sm batch-notes" rows="2" placeholder="ملاحظات..."></textarea>
               </div>
             </div>
@@ -359,14 +363,14 @@ async function uploadBatch() {
 
   const fd = new FormData();
   const items = [];
+  const thumbIndexes = [];
   const rows = document.querySelectorAll('#batchPreview > div');
 
   for (let i = 0; i < batchFileList.length; i++) {
     const row = rows[i];
     const nameInput = row?.querySelector('.batch-name');
     const notesInput = row?.querySelector('.batch-notes');
-    const name = (nameInput?.value || batchFileList[i].name).trim();
-    if (!name) continue;
+    const name = (nameInput?.value || batchFileList[i].name).trim() || `تصميم ${i + 1}`;
     items.push({
       Name: name,
       Notes: notesInput?.value?.trim() || '',
@@ -378,12 +382,16 @@ async function uploadBatch() {
     fd.append('files', batchFileList[i]);
     try {
       const autoThumb = await generateAutoThumbnail(batchFileList[i]);
-      if (autoThumb) fd.append('thumbs', autoThumb);
+      if (autoThumb) {
+        fd.append('thumbs', autoThumb);
+        thumbIndexes.push(i);
+      }
     } catch {}
   }
 
   if (!items.length) { showToast('لا توجد ملفات صالحة', 'warning'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الكل'; return; }
   fd.append('items', JSON.stringify(items));
+  fd.append('thumbIndexes', JSON.stringify(thumbIndexes));
 
   try {
     const res = await fetch('/api/designs/batch', { method: 'POST', body: fd });

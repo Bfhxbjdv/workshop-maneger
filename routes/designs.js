@@ -196,6 +196,8 @@ router.post('/batch', requirePermission('admin'), batchDesignUpload, (req, res) 
   try {
     let items = [];
     try { items = JSON.parse(req.body.items || '[]'); } catch (e) {}
+    let thumbIndexes = [];
+    try { thumbIndexes = JSON.parse(req.body.thumbIndexes || '[]').map(Number); } catch (e) {}
     const fileArr = req.files?.files || [];
     const thumbArr = req.files?.thumbs || [];
     if (!fileArr.length) return res.status(400).json({ error: 'لم يتم اختيار ملفات' });
@@ -215,7 +217,11 @@ router.post('/batch', requirePermission('admin'), batchDesignUpload, (req, res) 
         fs.renameSync(uploaded.path, filePath);
 
         let thumbPath = null;
-        const thumbFile = thumbArr[i];
+        // Thumbnails are optional, so their multipart list can be shorter
+        // than the file list. Use the submitted source index instead of
+        // assuming position i (which mixed previews after a missing thumb).
+        const thumbPosition = thumbIndexes.indexOf(i);
+        const thumbFile = thumbPosition >= 0 ? thumbArr[thumbPosition] : (!thumbIndexes.length ? thumbArr[i] : null);
         if (thumbFile) {
           thumbPath = path.join(designDir, 'thumbnail' + (path.extname(thumbFile.originalname) || '.png'));
           fs.renameSync(thumbFile.path, thumbPath);
