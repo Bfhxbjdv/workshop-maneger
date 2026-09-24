@@ -283,6 +283,7 @@ export default {
         for (const order of orders) {
           const files = (await env.DB.prepare('SELECT File_Path FROM Order_Files WHERE Task_ID=?').bind(order.Task_ID).all()).results;
           for (const file of files) if (file.File_Path?.startsWith('r2://')) await env.FILES.delete(file.File_Path.slice(5));
+          await env.DB.prepare('DELETE FROM Order_Materials WHERE Task_ID=?').bind(order.Task_ID).run();
           await env.DB.prepare('DELETE FROM Order_Files WHERE Task_ID=?').bind(order.Task_ID).run();
           await env.DB.prepare('DELETE FROM Orders WHERE Task_ID=?').bind(order.Task_ID).run();
         }
@@ -567,6 +568,19 @@ export default {
       await env.DB.prepare("UPDATE Orders SET Approval_Status='approved', Status='قيد التصميم', Designer_ID=?, Agent_Approved_At=CURRENT_TIMESTAMP, Agent_Approved_By=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?")
         .bind(designer.User_ID, a.user.User_ID, order.Task_ID).run();
       return json({ success: true, order: await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(order.Task_ID).first() });
+    }
+
+    const orderDelete = path.match(/^\/api\/orders\/(\d+)$/);
+    if (orderDelete && request.method === 'DELETE') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'حذف الطلبات للمدير فقط' }, 403);
+      const taskId = Number(orderDelete[1]);
+      const files = (await env.DB.prepare('SELECT File_Path FROM Order_Files WHERE Task_ID=?').bind(taskId).all()).results;
+      for (const file of files) if (file.File_Path?.startsWith('r2://')) await env.FILES.delete(file.File_Path.slice(5));
+      await env.DB.prepare('DELETE FROM Order_Materials WHERE Task_ID=?').bind(taskId).run();
+      await env.DB.prepare('DELETE FROM Order_Files WHERE Task_ID=?').bind(taskId).run();
+      await env.DB.prepare('DELETE FROM Orders WHERE Task_ID=?').bind(taskId).run();
+      return json({ success: true });
     }
 
     const status = path.match(/^\/api\/orders\/(\d+)\/status$/);
