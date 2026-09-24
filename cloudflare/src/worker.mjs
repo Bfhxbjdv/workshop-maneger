@@ -183,12 +183,40 @@ export default {
       if (request.method === 'GET') {
         const term = `%${url.searchParams.get('search') || ''}%`, agent = a.user.Role === 'Agent';
         const query = `SELECT * FROM Clients WHERE (Full_Name LIKE ? OR Phone_Number LIKE ?) ${agent ? 'AND Created_By=?' : ''} ORDER BY Created_At DESC LIMIT 100`;
-        return json({ clients: (await env.DB.prepare(query).bind(term, term, ...(agent ? [a.user.User_ID] : [])).all()).results });
+        return json({ clients: (await env.DB.prepare(query).bind(term, term, ...(agent ? [a.user.User_ID] : [])).all()).results, page: 1, pages: 1 });
       }
       if (request.method === 'POST') {
         const b = await request.json(); if (!String(b.Full_Name || '').trim()) return json({ error: 'اسم العميل مطلوب' }, 400);
         const result = await env.DB.prepare('INSERT INTO Clients (Full_Name, Phone_Number, Notes, Created_By, Agent_ID) VALUES (?, ?, ?, ?, ?)').bind(b.Full_Name.trim(), b.Phone_Number || '', b.Notes || '', a.user.User_ID, a.user.Role === 'Agent' ? a.user.User_ID : null).run();
         return json({ client: await env.DB.prepare('SELECT * FROM Clients WHERE Client_ID=?').bind(result.meta.last_row_id).first() }, 201);
+      }
+    }
+    const clientRoute = path.match(/^\/api\/clients\/(\d+)(\/orders)?$/);
+    if (clientRoute) {
+      const a = await auth(request, env, 'clients'); if (a.response) return a.response;
+      const clientId = Number(clientRoute[1]);
+      const client = await env.DB.prepare('SELECT * FROM Clients WHERE Client_ID=?').bind(clientId).first();
+      if (!client) return json({ error: 'العميل غير موجود' }, 404);
+      if (a.user.Role === 'Agent' && client.Created_By !== a.user.User_ID) return json({ error: 'لا تملك صلاحية هذا العميل' }, 403);
+      if (clientRoute[2] && request.method === 'GET') return json((await env.DB.prepare('SELECT o.*, GROUP_CONCAT(i.Material_Name || \' \' || COALESCE(i.Thickness, \'\')) AS Materials_List FROM Orders o LEFT JOIN Inventory i ON i.Material_ID=o.Material_ID WHERE o.Client_ID=? GROUP BY o.Task_ID ORDER BY o.Created_At DESC').bind(clientId).all()).results);
+      if (request.method === 'GET') return json(client);
+      if (request.method === 'PUT') {
+        const body = await request.json().catch(() => ({})); const name = String(body.Full_Name || '').trim();
+        if (!name) return json({ error: 'اسم العميل مطلوب' }, 400);
+        await env.DB.prepare('UPDATE Clients SET Full_Name=?, Phone_Number=?, Rating=?, Notes=? WHERE Client_ID=?').bind(name, String(body.Phone_Number || ''), Math.max(1, Math.min(5, Number(body.Rating || 3))), String(body.Notes || ''), clientId).run();
+        return json({ success: true, client: await env.DB.prepare('SELECT * FROM Clients WHERE Client_ID=?').bind(clientId).first() });
+      }
+      if (request.method === 'DELETE') {
+        if (a.user.Role !== 'Admin') return json({ error: 'حذف العميل للمدير فقط' }, 403);
+        const orders = (await env.DB.prepare('SELECT Task_ID FROM Orders WHERE Client_ID=?').bind(clientId).all()).results;
+        for (const order of orders) {
+          const files = (await env.DB.prepare('SELECT File_Path FROM Order_Files WHERE Task_ID=?').bind(order.Task_ID).all()).results;
+          for (const file of files) if (file.File_Path?.startsWith('r2://')) await env.FILES.delete(file.File_Path.slice(5));
+          await env.DB.prepare('DELETE FROM Order_Files WHERE Task_ID=?').bind(order.Task_ID).run();
+          await env.DB.prepare('DELETE FROM Orders WHERE Task_ID=?').bind(order.Task_ID).run();
+        }
+        await env.DB.prepare('DELETE FROM Clients WHERE Client_ID=?').bind(clientId).run();
+        return json({ success: true });
       }
     }
     if (path === '/api/inventory') {
@@ -207,6 +235,15 @@ export default {
           .bind(name, String(body.Thickness || '').trim(), quantity, Math.max(0, Number(body.Cost_Per_Unit || 0))).run();
         return json({ material: await env.DB.prepare('SELECT * FROM Inventory WHERE Material_ID=?').bind(result.meta.last_row_id).first() }, 201);
       }
+    }
+    const inventoryRoute = path.match(/^\/api\/inventory\/(\d+)$/);
+    if (inventoryRoute && request.method === 'PUT') {
+      const a = await auth(request, env, 'inventory'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'تعديل المخزون للمدير فقط' }, 403);
+      const body = await request.json().catch(() => ({})), name = String(body.Material_Name || '').trim(), quantity = Number(body.Quantity);
+      if (!name || !Number.isFinite(quantity) || quantity < 0) return json({ error: 'اسم الخامة والكمية الصحيحة مطلوبان' }, 400);
+      await env.DB.prepare('UPDATE Inventory SET Material_Name=?, Thickness=?, Quantity=?, Cost_Per_Unit=? WHERE Material_ID=?').bind(name, String(body.Thickness || ''), quantity, Math.max(0, Number(body.Cost_Per_Unit || 0)), Number(inventoryRoute[1])).run();
+      return json({ success: true });
     }
 
     if (path === '/api/orders') {
