@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import adminTemplate from '../../views/admin.ejs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -8,6 +9,12 @@ const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/rou
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 function loginPage(error = '') {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>body{margin:0;font-family:system-ui;background:#101827;color:#e5e7eb;display:grid;min-height:100vh;place-items:center}.card{width:min(390px,90vw);background:#1f2937;border:1px solid #374151;border-radius:16px;padding:28px}h1{margin-top:0}label{display:block;margin:14px 0 6px}input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;border:1px solid #4b5563;font:inherit}input{background:#111827;color:#fff}button{margin-top:20px;background:#f59e0b;color:#111827;font-weight:700;border:0}.error{background:#7f1d1d;padding:10px;border-radius:8px}</style></head><body><main class="card"><h1>ورشة كازانجي</h1><p>تسجيل الدخول إلى نظام إدارة الورشة</p>${error ? `<p class="error">${esc(error)}</p>` : ''}<form method="post" action="/login"><label>اسم المستخدم</label><input name="username" required autocomplete="username"><label>كلمة المرور</label><input type="password" name="password" required autocomplete="current-password"><button type="submit">دخول</button></form></main></body></html>`;
+}
+function legacyAdminPage(user) {
+  // The old admin screen is intentionally kept as the source of truth for the
+  // interface.  It only has one server-side value, so it can be safely filled
+  // without bringing the Node/EJS runtime into a Worker.
+  return adminTemplate.replace(/<%=\s*user\.name\s*%>/g, esc(user.name));
 }
 function appPage(user) {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>
@@ -112,6 +119,8 @@ export default {
       if (path === '/' && user.Role === 'Laser_Op') return Response.redirect(new URL('/laser', request.url), 302);
       if (path === '/' && user.Role === 'Router_Op') return Response.redirect(new URL('/router', request.url), 302);
       if (path === '/' && user.Role === 'Agent') return Response.redirect(new URL('/agent', request.url), 302);
+      if (path === '/' && user.Role === 'Admin') return Response.redirect(new URL('/admin', request.url), 302);
+      if (path === '/admin' && user.Role === 'Admin') return html(legacyAdminPage({ name: user.Name }));
       return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
     }
 
