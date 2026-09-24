@@ -316,6 +316,15 @@ export default {
       await env.DB.prepare('UPDATE Inventory SET Material_Name=?, Thickness=?, Quantity=?, Cost_Per_Unit=? WHERE Material_ID=?').bind(name, String(body.Thickness || ''), quantity, Math.max(0, Number(body.Cost_Per_Unit || 0)), Number(inventoryRoute[1])).run();
       return json({ success: true });
     }
+    if (inventoryRoute && request.method === 'DELETE') {
+      const a = await auth(request, env, 'inventory'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'حذف الخامات للمدير فقط' }, 403);
+      const materialId = Number(inventoryRoute[1]);
+      const used = await env.DB.prepare('SELECT Task_ID FROM Orders WHERE Material_ID=? LIMIT 1').bind(materialId).first();
+      if (used) return json({ error: 'لا يمكن حذف خامة مرتبطة بطلبات. عدّلها أو أرشفها أولًا.' }, 409);
+      await env.DB.prepare('DELETE FROM Inventory WHERE Material_ID=?').bind(materialId).run();
+      return json({ success: true });
+    }
 
     if (path === '/api/invoices') {
       const a = await auth(request, env, 'invoices'); if (a.response) return a.response;
