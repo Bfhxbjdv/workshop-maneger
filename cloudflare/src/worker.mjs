@@ -195,7 +195,8 @@ export default {
       const a = await auth(request, env, 'inventory'); if (a.response) return a.response;
       if (request.method === 'GET') {
         const inventory = (await env.DB.prepare('SELECT * FROM Inventory ORDER BY Material_Name, Thickness').all()).results;
-        return request.headers.get('X-Requested-With') ? json(inventory) : json({ inventory });
+        const legacyPage = /\/(admin|designer|laser|router|agent)(?:\?|$)/.test(request.headers.get('referer') || '');
+        return request.headers.get('X-Requested-With') || legacyPage ? json(inventory) : json({ inventory });
       }
       if (request.method === 'POST') {
         if (a.user.Role !== 'Admin') return json({ error: 'إضافة خامات المخزون متاحة للمدير فقط' }, 403);
@@ -211,8 +212,13 @@ export default {
     if (path === '/api/orders') {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response;
       if (request.method === 'GET') {
-        const s = orderScope(a.user); const query = `SELECT o.*, c.Full_Name Client_Name, u.Name Designer_Name FROM Orders o LEFT JOIN Clients c ON c.Client_ID=o.Client_ID LEFT JOIN Users u ON u.User_ID=o.Designer_ID WHERE ${s.sql} ORDER BY o.Created_At DESC LIMIT 100`;
-        return json({ orders: (await env.DB.prepare(query).bind(...s.values).all()).results });
+        const s = orderScope(a.user), where = [s.sql], values = [...s.values];
+        const statusFilter = url.searchParams.get('status'), machineFilter = url.searchParams.get('machine'), clientFilter = Number(url.searchParams.get('clientId'));
+        if (statusFilter) { where.push('o.Status=?'); values.push(statusFilter); }
+        if (machineFilter && ['Laser', 'Router'].includes(machineFilter)) { where.push('o.Machine_Type=?'); values.push(machineFilter); }
+        if (Number.isInteger(clientFilter) && clientFilter > 0) { where.push('o.Client_ID=?'); values.push(clientFilter); }
+        const query = `SELECT o.*, c.Full_Name Client_Name, u.Name Designer_Name, i.Material_Name, i.Thickness FROM Orders o LEFT JOIN Clients c ON c.Client_ID=o.Client_ID LEFT JOIN Users u ON u.User_ID=o.Designer_ID LEFT JOIN Inventory i ON i.Material_ID=o.Material_ID WHERE ${where.join(' AND ')} ORDER BY o.Created_At DESC LIMIT 200`;
+        return json({ orders: (await env.DB.prepare(query).bind(...values).all()).results });
       }
       if (request.method === 'POST') {
         const b = await request.json(); if (!b.Client_ID || !['Laser', 'Router'].includes(b.Machine_Type)) return json({ error: 'بيانات الطلب غير مكتملة' }, 400);
@@ -224,8 +230,15 @@ export default {
         const imageIds = Array.isArray(b.Image_IDs) ? b.Image_IDs.map(Number).filter(Number.isInteger).slice(0, 30) : [];
         for (const imageId of imageIds) {
           const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(imageId).first();
-          if (image) await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, 'image', 1, ?)")
-            .bind(taskId, image.Original_Name, image.Stored_Name, image.File_Path, image.File_Size, a.user.User_ID).run();
+          if (image) {
+            await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, 'image', 1, ?)")
+              .bind(taskId, image.Original_Name, image.Stored_Name, image.File_Path, image.File_Size, a.user.User_ID).run();
+            if (image.Design_ID) {
+              const design = await env.DB.prepare('SELECT * FROM Designs WHERE Design_ID=?').bind(image.Design_ID).first();
+              if (design?.FilePath) await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, 0, ?, 'design', 1, ?)")
+                .bind(taskId, design.Original_Name, cleanName(design.Original_Name), design.FilePath, `التصميم المرتبط: ${design.Name}`, a.user.User_ID).run();
+            }
+          }
         }
         const order = await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(taskId).first();
         return json({ Task_ID: taskId, order }, 201);
@@ -434,23 +447,51 @@ export default {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response; const action = fileRoute[1], taskId = Number(fileRoute[2]), order = await accessibleOrder(env, a.user, taskId); if (!order) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
       if (action === 'list' && request.method === 'GET') {
         const files = (await env.DB.prepare('SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_Type, Is_Current DESC, Created_At DESC').bind(taskId).all()).results;
-        return request.headers.get('X-Requested-With') ? json(files) : json({ files });
+        const legacyPage = /\/(admin|designer|laser|router|agent)(?:\?|$)/.test(request.headers.get('referer') || '');
+        return request.headers.get('X-Requested-With') || legacyPage ? json(files) : json({ files });
       }
       if (action === 'upload' && request.method === 'POST') {
         const form = await request.formData(), files = form.getAll('files').filter(x => x instanceof File); if (!files.length) return json({ error: 'لم يتم اختيار ملفات' }, 400);
+        let labels = []; try { labels = JSON.parse(String(form.get('labels') || '[]')); } catch { labels = []; }
+        let materials = []; try { materials = JSON.parse(String(form.get('materials') || '[]')); } catch { materials = []; }
         const saved = [];
-        for (const file of files.slice(0, 20)) {
+        await env.DB.prepare("UPDATE Order_Files SET Is_Current=0 WHERE Task_ID=? AND File_Type='design'").bind(taskId).run();
+        for (const [index, file] of files.slice(0, 20).entries()) {
           const key = `orders/task-${taskId}/${crypto.randomUUID()}-${cleanName(file.name)}`; await env.FILES.put(key, file.stream(), { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
-          await env.DB.prepare("UPDATE Order_Files SET Is_Current=0 WHERE Task_ID=? AND File_Type='design'").bind(taskId).run();
-          const inserted = await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, 'design', 1, ?)").bind(taskId, file.name, key.split('/').at(-1), `r2://${key}`, file.size, a.user.User_ID).run(); saved.push({ File_ID: inserted.meta.last_row_id, Original_Name: file.name, File_Path: `r2://${key}` });
+          const label = String(labels[index] || '').slice(0, 200);
+          const inserted = await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, 'design', 1, ?)").bind(taskId, file.name, key.split('/').at(-1), `r2://${key}`, file.size, label, a.user.User_ID).run(); saved.push({ File_ID: inserted.meta.last_row_id, Original_Name: file.name, File_Path: `r2://${key}` });
         }
-        await env.DB.prepare("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?").bind(saved.at(-1).File_Path, saved.at(-1).Original_Name, taskId).run(); return json({ files: saved }, 201);
+        for (const material of Array.isArray(materials) ? materials.slice(0, 20) : []) if (Number.isInteger(Number(material.Material_ID)) && Number(material.Quantity) > 0) await env.DB.prepare('INSERT INTO Order_Materials (Task_ID, Material_ID, Quantity) VALUES (?, ?, ?)').bind(taskId, Number(material.Material_ID), Number(material.Quantity)).run();
+        await env.DB.prepare("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?").bind(saved.at(-1).File_Path, saved.at(-1).Original_Name, taskId).run(); return json({ files: saved, count: saved.length });
       }
       if (action === 'download' && request.method === 'GET') {
-        const file = await env.DB.prepare("SELECT * FROM Order_Files WHERE Task_ID=? AND COALESCE(Is_Current,1)=1 ORDER BY Created_At DESC LIMIT 1").bind(taskId).first(); if (!file?.File_Path?.startsWith('r2://')) return json({ error: 'لا يوجد ملف مخزن في R2 لهذا الطلب' }, 404);
+        const file = await env.DB.prepare("SELECT * FROM Order_Files WHERE Task_ID=? AND File_Type!='image' AND COALESCE(Is_Current,1)=1 ORDER BY Created_At DESC LIMIT 1").bind(taskId).first(); if (!file?.File_Path?.startsWith('r2://')) return json({ error: 'لا يوجد ملف تصميم مخزن في R2 لهذا الطلب' }, 404);
         const object = await env.FILES.get(file.File_Path.slice(5)); if (!object) return json({ error: 'الملف غير موجود' }, 404);
         return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `attachment; filename="${cleanName(file.Original_Name)}"` } });
       }
+    }
+    const fileById = path.match(/^\/api\/files\/(download-file|image)\/(\d+)$/);
+    if (fileById && request.method === 'GET') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const file = await env.DB.prepare('SELECT f.* FROM Order_Files f JOIN Orders o ON o.Task_ID=f.Task_ID WHERE f.File_ID=?').bind(Number(fileById[2])).first();
+      if (!file || !await accessibleOrder(env, a.user, file.Task_ID)) return json({ error: 'الملف غير موجود أو غير مصرح' }, 404);
+      if (!file.File_Path?.startsWith('r2://')) return json({ error: 'الملف غير متاح' }, 404);
+      const object = await env.FILES.get(file.File_Path.slice(5)); if (!object) return json({ error: 'الملف غير موجود في التخزين' }, 404);
+      const inline = fileById[1] === 'image';
+      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${cleanName(file.Original_Name)}"` } });
+    }
+    const uploadImage = path.match(/^\/api\/files\/upload-image\/(\d+)$/);
+    if (uploadImage && request.method === 'POST') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const taskId = Number(uploadImage[1]), order = await accessibleOrder(env, a.user, taskId); if (!order) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
+      const images = (await request.formData()).getAll('image').filter(file => file instanceof File);
+      if (!images.length || images.some(file => !file.type.startsWith('image/') || file.size > 10 * 1024 * 1024)) return json({ error: 'اختر صورًا صالحة بحد أقصى 10 ميغابايت للصورة' }, 400);
+      for (const image of images.slice(0, 20)) {
+        const key = `orders/task-${taskId}/images/${crypto.randomUUID()}-${cleanName(image.name)}`;
+        await env.FILES.put(key, image.stream(), { httpMetadata: { contentType: image.type } });
+        await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, 'image', 1, ?)").bind(taskId, image.name, key.split('/').at(-1), `r2://${key}`, image.size, a.user.User_ID).run();
+      }
+      return json({ success: true });
     }
     const asset = await env.ASSETS.fetch(request);
     return asset.status === 404 ? json({ error: 'المسار غير موجود' }, 404) : asset;
