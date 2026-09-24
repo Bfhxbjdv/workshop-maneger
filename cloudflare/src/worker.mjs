@@ -325,6 +325,64 @@ export default {
       return json({ success: true });
     }
 
+    if (path === '/api/designs' && request.method === 'POST') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (!['Admin', 'Designer'].includes(a.user.Role)) return json({ error: 'رفع التصاميم للمدير أو المصمم فقط' }, 403);
+      const form = await request.formData(), file = form.get('file'), thumbnail = form.get('thumbnail');
+      const name = String(form.get('Name') || '').trim();
+      if (!name || !(file instanceof File)) return json({ error: 'اسم التصميم وملفه مطلوبان' }, 400);
+      if (file.size > 25 * 1024 * 1024) return json({ error: 'حجم ملف التصميم يتجاوز 25 ميغابايت' }, 400);
+      const fileKey = `designs/${crypto.randomUUID()}-${cleanName(file.name)}`;
+      await env.FILES.put(fileKey, file.stream(), { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
+      let thumbnailPath = null;
+      if (thumbnail instanceof File && thumbnail.size) {
+        if (!thumbnail.type.startsWith('image/') || thumbnail.size > 10 * 1024 * 1024) return json({ error: 'الصورة المصغرة يجب أن تكون صورة أصغر من 10 ميغابايت' }, 400);
+        const thumbKey = `design-thumbnails/${crypto.randomUUID()}-${cleanName(thumbnail.name)}`;
+        await env.FILES.put(thumbKey, thumbnail.stream(), { httpMetadata: { contentType: thumbnail.type } });
+        thumbnailPath = `r2://${thumbKey}`;
+      }
+      const rawPassword = String(form.get('Password') || '');
+      const result = await env.DB.prepare('INSERT INTO Designs (Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(name, String(form.get('Category') || ''), String(form.get('Material') || ''), String(form.get('Thickness') || ''), Number(form.get('Width') || 0), Number(form.get('Height') || 0), String(form.get('Unit') || 'مم'), String(form.get('Notes') || ''), `r2://${fileKey}`, file.name, thumbnailPath, rawPassword ? await bcrypt.hash(rawPassword, 12) : null, a.user.User_ID).run();
+      return json({ success: true, Design_ID: result.meta.last_row_id }, 201);
+    }
+
+    if (path === '/api/agents/admin/designs' && request.method === 'GET') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'هذه القائمة للمدير فقط' }, 403);
+      const search = `%${String(url.searchParams.get('search') || '').trim()}%`;
+      const designs = (await env.DB.prepare(`SELECT d.*, COUNT(ai.Image_ID) AS Image_Count, 1 AS Is_Active FROM Designs d LEFT JOIN Agent_Images ai ON ai.Design_ID=d.Design_ID WHERE d.Name LIKE ? OR d.Category LIKE ? GROUP BY d.Design_ID ORDER BY d.CreatedAt DESC LIMIT 100`).bind(search, search).all()).results;
+      return json({ designs, page: 1, pages: 1 });
+    }
+    const designDelete = path.match(/^\/api\/agents\/admin\/designs\/(\d+)$/);
+    if (designDelete && request.method === 'DELETE') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'حذف التصاميم للمدير فقط' }, 403);
+      const design = await env.DB.prepare('SELECT * FROM Designs WHERE Design_ID=?').bind(Number(designDelete[1])).first();
+      if (!design) return json({ error: 'التصميم غير موجود' }, 404);
+      for (const pathValue of [design.FilePath, design.ThumbnailPath]) if (pathValue?.startsWith('r2://')) await env.FILES.delete(pathValue.slice(5));
+      await env.DB.prepare('DELETE FROM Designs WHERE Design_ID=?').bind(design.Design_ID).run();
+      return json({ success: true });
+    }
+    const imageDesignLink = path.match(/^\/api\/agents\/admin\/images\/(\d+)\/link-design$/);
+    if (imageDesignLink && request.method === 'PUT') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'ربط الصور بالتصاميم للمدير فقط' }, 403);
+      const body = await request.json().catch(() => ({})), designId = body.design_id === null ? null : Number(body.design_id);
+      if (designId !== null && !Number.isInteger(designId)) return json({ error: 'التصميم المختار غير صالح' }, 400);
+      if (designId && !(await env.DB.prepare('SELECT Design_ID FROM Designs WHERE Design_ID=?').bind(designId).first())) return json({ error: 'التصميم غير موجود' }, 404);
+      await env.DB.prepare('UPDATE Agent_Images SET Design_ID=? WHERE Image_ID=?').bind(designId, Number(imageDesignLink[1])).run();
+      return json({ success: true });
+    }
+    const designDownload = path.match(/^\/api\/designs\/(\d+)\/download$/);
+    if (designDownload && request.method === 'GET') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const design = await env.DB.prepare('SELECT * FROM Designs WHERE Design_ID=?').bind(Number(designDownload[1])).first();
+      if (!design?.FilePath?.startsWith('r2://')) return json({ error: 'ملف التصميم غير موجود' }, 404);
+      const object = await env.FILES.get(design.FilePath.slice(5)); if (!object) return json({ error: 'الملف غير موجود في التخزين' }, 404);
+      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `attachment; filename="${cleanName(design.Original_Name)}"` } });
+    }
+
     if (path === '/api/orders/pending' && request.method === 'GET') {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response;
       if (a.user.Role !== 'Admin') return json({ error: 'هذه القائمة للمدير فقط' }, 403);
