@@ -1,5 +1,9 @@
 import bcrypt from 'bcryptjs';
 import adminTemplate from '../../views/admin.ejs';
+import agentTemplate from '../../views/agent.ejs';
+import designerTemplate from '../../views/designer.ejs';
+import laserTemplate from '../../views/laser.ejs';
+import routerTemplate from '../../views/router.ejs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -15,6 +19,15 @@ function legacyAdminPage(user) {
   // interface.  It only has one server-side value, so it can be safely filled
   // without bringing the Node/EJS runtime into a Worker.
   return adminTemplate.replace(/<%=\s*user\.name\s*%>/g, esc(user.name));
+}
+function legacyRolePage(template, user) {
+  // Legacy role pages use only a name, a cache-busting asset version, and a
+  // few optional navigation tags.  Workers do not need a Node template engine
+  // for these safe substitutions.
+  return template
+    .replace(/<%=\s*user\.name\s*%>/g, esc(user.name))
+    .replace(/<%=\s*assetVersion\s*%>/g, 'cloudflare')
+    .replace(/<%\s*if\s*\([\s\S]*?\)\s*\{\s*%>|<%\s*}\s*%>/g, '');
 }
 function appPage(user) {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>
@@ -121,6 +134,10 @@ export default {
       if (path === '/' && user.Role === 'Agent') return Response.redirect(new URL('/agent', request.url), 302);
       if (path === '/' && user.Role === 'Admin') return Response.redirect(new URL('/admin', request.url), 302);
       if (path === '/admin' && user.Role === 'Admin') return html(legacyAdminPage({ name: user.Name }));
+      if (path === '/agent' && user.Role === 'Agent') return html(legacyRolePage(agentTemplate, { name: user.Name }));
+      if (path === '/designer' && user.Role === 'Designer') return html(legacyRolePage(designerTemplate, { name: user.Name }));
+      if (path === '/laser' && user.Role === 'Laser_Op') return html(legacyRolePage(laserTemplate, { name: user.Name }));
+      if (path === '/router' && user.Role === 'Router_Op') return html(legacyRolePage(routerTemplate, { name: user.Name }));
       return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
     }
 
