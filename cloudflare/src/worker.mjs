@@ -6,6 +6,7 @@ import laserTemplate from '../../views/laser.ejs';
 import routerTemplate from '../../views/router.ejs';
 import clientsTemplate from '../../views/clients.ejs';
 import inventoryTemplate from '../../views/inventory.ejs';
+import invoicesTemplate from '../../views/invoices.ejs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -142,6 +143,7 @@ export default {
       if (path === '/router' && user.Role === 'Router_Op') return html(legacyRolePage(routerTemplate, { name: user.Name }));
       if (path === '/clients' && permitted(user, 'clients')) return html(clientsTemplate);
       if (path === '/inventory' && permitted(user, 'inventory')) return html(inventoryTemplate);
+      if (path === '/invoices' && permitted(user, 'invoices')) return html(invoicesTemplate.replaceAll('SYP', 'USD'));
       return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
     }
 
@@ -248,6 +250,32 @@ export default {
       if (!name || !Number.isFinite(quantity) || quantity < 0) return json({ error: 'اسم الخامة والكمية الصحيحة مطلوبان' }, 400);
       await env.DB.prepare('UPDATE Inventory SET Material_Name=?, Thickness=?, Quantity=?, Cost_Per_Unit=? WHERE Material_ID=?').bind(name, String(body.Thickness || ''), quantity, Math.max(0, Number(body.Cost_Per_Unit || 0)), Number(inventoryRoute[1])).run();
       return json({ success: true });
+    }
+
+    if (path === '/api/invoices') {
+      const a = await auth(request, env, 'invoices'); if (a.response) return a.response;
+      if (request.method === 'GET') {
+        const search = `%${String(url.searchParams.get('search') || '').trim()}%`, status = String(url.searchParams.get('status') || '').trim();
+        const invoices = (await env.DB.prepare(`SELECT inv.*, c.Full_Name AS Client_Name, o.Machine_Type FROM Invoices inv JOIN Clients c ON c.Client_ID=inv.Client_ID LEFT JOIN Orders o ON o.Task_ID=inv.Order_Task_ID WHERE (c.Full_Name LIKE ? OR inv.Invoice_Number LIKE ?) ${status ? 'AND inv.Status=?' : ''} ORDER BY inv.Created_At DESC LIMIT 100`).bind(search, search, ...(status ? [status] : [])).all()).results;
+        return json({ invoices, page: 1, pages: 1 });
+      }
+      if (request.method === 'POST') {
+        if (a.user.Role !== 'Admin') return json({ error: 'إنشاء الفواتير للمدير فقط' }, 403);
+        const body = await request.json().catch(() => ({})), taskId = Number(body.Order_Task_ID), amount = Number(body.Amount);
+        const order = await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(taskId).first();
+        if (!order || !Number.isFinite(amount) || amount < 0) return json({ error: 'الطلب والمبلغ الصحيحان مطلوبان' }, 400);
+        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${taskId}`;
+        const created = await env.DB.prepare('INSERT INTO Invoices (Order_Task_ID, Client_ID, Invoice_Number, Amount, Status) VALUES (?, ?, ?, ?, ?)').bind(taskId, order.Client_ID, invoiceNumber, amount, 'غير مدفوعة').run();
+        return json({ Invoice_ID: created.meta.last_row_id, Invoice_Number: invoiceNumber }, 201);
+      }
+    }
+    const invoiceView = path.match(/^\/api\/invoices\/(\d+)\/(view|pdf)$/);
+    if (invoiceView && request.method === 'GET') {
+      const a = await auth(request, env, 'invoices'); if (a.response) return a.response;
+      const invoice = await env.DB.prepare('SELECT inv.*, c.Full_Name AS Client_Name, c.Phone_Number, o.Machine_Type FROM Invoices inv JOIN Clients c ON c.Client_ID=inv.Client_ID LEFT JOIN Orders o ON o.Task_ID=inv.Order_Task_ID WHERE inv.Invoice_ID=?').bind(Number(invoiceView[1])).first();
+      if (!invoice) return html('<h1>الفاتورة غير موجودة</h1>', 404);
+      const body = `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>${esc(invoice.Invoice_Number)}</title><style>body{font-family:system-ui;margin:40px;color:#172033}.card{border:1px solid #ddd;border-radius:12px;padding:28px;max-width:680px;margin:auto}dt{font-weight:700}dd{margin:0 0 16px}h1{color:#0f766e}</style><main class="card"><h1>فاتورة ${esc(invoice.Invoice_Number)}</h1><dl><dt>العميل</dt><dd>${esc(invoice.Client_Name)}</dd><dt>الطلب</dt><dd>#${invoice.Order_Task_ID} · ${esc(invoice.Machine_Type || '')}</dd><dt>المبلغ</dt><dd>$${Number(invoice.Amount).toFixed(2)} USD</dd><dt>الحالة</dt><dd>${esc(invoice.Status)}</dd><dt>التاريخ</dt><dd>${esc(invoice.Created_At)}</dd></dl><button onclick="print()">طباعة</button></main></html>`;
+      return html(body);
     }
 
     if (path === '/api/orders') {
