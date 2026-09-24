@@ -193,7 +193,10 @@ export default {
     }
     if (path === '/api/inventory') {
       const a = await auth(request, env, 'inventory'); if (a.response) return a.response;
-      if (request.method === 'GET') return json({ inventory: (await env.DB.prepare('SELECT * FROM Inventory ORDER BY Material_Name, Thickness').all()).results });
+      if (request.method === 'GET') {
+        const inventory = (await env.DB.prepare('SELECT * FROM Inventory ORDER BY Material_Name, Thickness').all()).results;
+        return request.headers.get('X-Requested-With') ? json(inventory) : json({ inventory });
+      }
       if (request.method === 'POST') {
         if (a.user.Role !== 'Admin') return json({ error: 'إضافة خامات المخزون متاحة للمدير فقط' }, 403);
         const body = await request.json();
@@ -240,6 +243,49 @@ export default {
       const pricing = (await env.DB.prepare('SELECT * FROM Product_Pricing WHERE Is_Active=1 ORDER BY Product_Name').all()).results;
       for (const product of pricing) product.Materials = (await env.DB.prepare('SELECT i.*, p.Price FROM Product_Material_Pricing p JOIN Inventory i ON i.Material_ID=p.Material_ID WHERE p.Pricing_ID=? AND p.Is_Active=1').bind(product.Pricing_ID).all()).results;
       return json({ pricing });
+    }
+
+    if (path === '/api/orders/pricing') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (request.method === 'GET') {
+        const pricing = (await env.DB.prepare('SELECT * FROM Product_Pricing WHERE Is_Active=1 ORDER BY Product_Name').all()).results;
+        for (const product of pricing) product.Materials = (await env.DB.prepare('SELECT i.*, p.Price FROM Product_Material_Pricing p JOIN Inventory i ON i.Material_ID=p.Material_ID WHERE p.Pricing_ID=? AND p.Is_Active=1').bind(product.Pricing_ID).all()).results;
+        return json({ pricing });
+      }
+      if (request.method === 'POST') {
+        if (a.user.Role !== 'Admin') return json({ error: 'إدارة الأسعار للمدير فقط' }, 403);
+        const b = await request.json().catch(() => ({})), name = String(b.Product_Name || '').trim();
+        const rows = Array.isArray(b.Material_Prices) ? b.Material_Prices.filter(row => Number.isInteger(Number(row.Material_ID)) && Number.isFinite(Number(row.Price)) && Number(row.Price) >= 0) : [];
+        if (!name || !rows.length) return json({ error: 'اسم المنتج وخامة واحدة بسعر صحيح مطلوبان' }, 400);
+        const created = await env.DB.prepare('INSERT INTO Product_Pricing (Product_Name, Category, Base_Price, Unit, Description) VALUES (?, ?, ?, ?, ?)')
+          .bind(name, String(b.Category || '').trim(), Math.max(0, Number(b.Base_Price || 0)), b.Unit === 'قطعة' ? 'قطعة' : 'لوح', String(b.Description || '').trim()).run();
+        for (const row of rows) await env.DB.prepare('INSERT INTO Product_Material_Pricing (Pricing_ID, Material_ID, Price) VALUES (?, ?, ?)').bind(created.meta.last_row_id, Number(row.Material_ID), Number(row.Price)).run();
+        return json({ success: true, Pricing_ID: created.meta.last_row_id }, 201);
+      }
+    }
+    const pricingDelete = path.match(/^\/api\/orders\/pricing\/(\d+)$/);
+    if (pricingDelete && request.method === 'DELETE') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'إدارة الأسعار للمدير فقط' }, 403);
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM Product_Material_Pricing WHERE Pricing_ID=?').bind(Number(pricingDelete[1])),
+        env.DB.prepare('DELETE FROM Product_Pricing WHERE Pricing_ID=?').bind(Number(pricingDelete[1]))
+      ]);
+      return json({ success: true });
+    }
+
+    const imageMaterials = path.match(/^\/api\/orders\/agent\/images\/(\d+)\/materials$/);
+    if (imageMaterials) {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const imageId = Number(imageMaterials[1]);
+      if (request.method === 'GET') return json({ materials: (await env.DB.prepare('SELECT i.* FROM Inventory i JOIN Agent_Image_Materials m ON m.Material_ID=i.Material_ID WHERE m.Image_ID=?').bind(imageId).all()).results });
+      if (request.method === 'PUT') {
+        if (a.user.Role !== 'Admin') return json({ error: 'ربط الخامات للمدير فقط' }, 403);
+        const ids = [...new Set((await request.json().catch(() => ({}))).Material_IDs || [])].map(Number).filter(Number.isInteger);
+        await env.DB.prepare('DELETE FROM Agent_Image_Materials WHERE Image_ID=?').bind(imageId).run();
+        for (const materialId of ids) await env.DB.prepare('INSERT OR IGNORE INTO Agent_Image_Materials (Image_ID, Material_ID) VALUES (?, ?)').bind(imageId, materialId).run();
+        return json({ success: true });
+      }
     }
 
     const agentImageFile = path.match(/^\/api\/orders\/agent\/images\/(\d+)\/file$/);
