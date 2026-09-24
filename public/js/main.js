@@ -195,7 +195,8 @@ async function addClient() {
 
 // ============== MATERIALS ==============
 async function loadMaterials(targetSelect) {
-  const data = await fetch('/api/inventory').then(r => r.json());
+  const payload = await fetch('/api/inventory').then(r => r.json());
+  const data = Array.isArray(payload) ? payload : (payload.inventory || []);
   const sel = targetSelect || document.getElementById('materialSelect');
   if (!sel) return;
   const html = '<option value="">-- اختر المادة --</option>' + data.map(m =>
@@ -801,7 +802,8 @@ async function loadClientDetail(clientId) {
 
 // ============== INVENTORY ==============
 async function loadInventory() {
-  const data = await fetch('/api/inventory').then(r => r.json());
+  const payload = await fetch('/api/inventory').then(r => r.json());
+  const data = Array.isArray(payload) ? payload : (payload.inventory || []);
   const tbody = document.getElementById('inventoryTableBody');
   if (!tbody) return;
   tbody.innerHTML = '';
@@ -815,7 +817,8 @@ async function loadInventory() {
 
 async function editMaterial(id) {
   try {
-    const materials = await fetch('/api/inventory').then(r => r.json());
+    const payload = await fetch('/api/inventory').then(r => r.json());
+    const materials = Array.isArray(payload) ? payload : (payload.inventory || []);
     const material = materials.find(m => Number(m.Material_ID) === Number(id));
     if (!material) { showToast('المادة غير موجودة', 'danger'); return; }
     const modal = document.getElementById('inventoryModal');
