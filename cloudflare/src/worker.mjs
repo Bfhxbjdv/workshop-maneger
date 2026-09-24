@@ -4,6 +4,8 @@ import agentTemplate from '../../views/agent.ejs';
 import designerTemplate from '../../views/designer.ejs';
 import laserTemplate from '../../views/laser.ejs';
 import routerTemplate from '../../views/router.ejs';
+import clientsTemplate from '../../views/clients.ejs';
+import inventoryTemplate from '../../views/inventory.ejs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -138,6 +140,8 @@ export default {
       if (path === '/designer' && user.Role === 'Designer') return html(legacyRolePage(designerTemplate, { name: user.Name }));
       if (path === '/laser' && user.Role === 'Laser_Op') return html(legacyRolePage(laserTemplate, { name: user.Name }));
       if (path === '/router' && user.Role === 'Router_Op') return html(legacyRolePage(routerTemplate, { name: user.Name }));
+      if (path === '/clients' && permitted(user, 'clients')) return html(clientsTemplate);
+      if (path === '/inventory' && permitted(user, 'inventory')) return html(inventoryTemplate);
       return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
     }
 
