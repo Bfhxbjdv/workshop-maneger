@@ -134,6 +134,33 @@ export default {
     if (path === '/api/auth/logout' && request.method === 'POST') return json({ ok: true }, 200, { 'set-cookie': 'workshop_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' });
     if (path === '/api/auth/me') { const a = await auth(request, env); return a.response || json({ user: a.user }); }
 
+    if (path === '/admin/api/admin-stats' && request.method === 'GET') {
+      const a = await auth(request, env); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'هذه الصفحة للمدير فقط' }, 403);
+      const one = async sql => Number((await env.DB.prepare(sql).first())?.count || 0);
+      const [totalUsers, totalClients, totalOrders, totalInvoices, totalExpenses, totalRevenue, pendingUploads, recentLogs] = await Promise.all([
+        one('SELECT COUNT(*) AS count FROM Users'), one('SELECT COUNT(*) AS count FROM Clients'),
+        one('SELECT COUNT(*) AS count FROM Orders'), one('SELECT COUNT(*) AS count FROM Invoices'),
+        env.DB.prepare('SELECT COALESCE(SUM(Amount),0) AS total FROM Expenses').first(),
+        env.DB.prepare("SELECT COALESCE(SUM(CASE WHEN Final_Price > 0 THEN Final_Price ELSE Price END),0) AS total FROM Orders WHERE Approval_Status!='rejected'").first(),
+        one("SELECT COUNT(*) AS count FROM Order_Files WHERE File_Path LIKE 'pending:%'"),
+        env.DB.prepare('SELECT l.*, u.Name AS User_Name FROM System_Logs l LEFT JOIN Users u ON u.User_ID=l.User_ID ORDER BY l.Created_At DESC LIMIT 10').all()
+      ]);
+      return json({ totalUsers, totalClients, totalOrders, totalInvoices, totalExpenses: Number(totalExpenses?.total || 0), totalRevenue: Number(totalRevenue?.total || 0), pendingUploads, recentLogs: recentLogs.results });
+    }
+
+    if (path === '/api/users' && request.method === 'GET') {
+      const a = await auth(request, env); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'هذه البيانات للمدير فقط' }, 403);
+      return json((await env.DB.prepare('SELECT User_ID, Name, Role, Username, Created_At FROM Users ORDER BY Name').all()).results);
+    }
+
+    if (path === '/api/clients/all' && request.method === 'GET') {
+      const a = await auth(request, env, 'clients'); if (a.response) return a.response;
+      const term = `%${url.searchParams.get('search') || ''}%`;
+      return json((await env.DB.prepare('SELECT * FROM Clients WHERE Full_Name LIKE ? OR Phone_Number LIKE ? ORDER BY Full_Name LIMIT 100').bind(term, term).all()).results);
+    }
+
     if (path === '/api/clients') {
       const a = await auth(request, env, 'clients'); if (a.response) return a.response;
       if (request.method === 'GET') {
@@ -174,6 +201,36 @@ export default {
       }
     }
 
+    if (path === '/api/orders/pending' && request.method === 'GET') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'هذه القائمة للمدير فقط' }, 403);
+      const query = `SELECT o.*, c.Full_Name AS Client_Name, u.Name AS Agent_Name
+        FROM Orders o LEFT JOIN Clients c ON c.Client_ID=o.Client_ID
+        LEFT JOIN Users u ON u.User_ID=o.Created_By
+        WHERE o.Approval_Status='pending' ORDER BY o.Created_At DESC`;
+      return json({ orders: (await env.DB.prepare(query).all()).results });
+    }
+
+    const approval = path.match(/^\/api\/orders\/(\d+)\/approve$/);
+    if (approval && request.method === 'PUT') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'الموافقة على الطلبات للمدير فقط' }, 403);
+      const order = await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(Number(approval[1])).first();
+      if (!order || order.Approval_Status !== 'pending') return json({ error: 'الطلب غير موجود أو تمت معالجته' }, 404);
+      const body = await request.json().catch(() => ({}));
+      if (body.action === 'reject') {
+        await env.DB.prepare("UPDATE Orders SET Approval_Status='rejected', Status='مرفوض', Notes=COALESCE(Notes,'') || ?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?")
+          .bind(body.reason ? `\nسبب الرفض: ${String(body.reason).slice(0, 500)}` : '', order.Task_ID).run();
+        return json({ success: true });
+      }
+      if (body.action !== 'approve' || !Number.isInteger(Number(body.designer_id))) return json({ error: 'اختر مصممًا صالحًا قبل الموافقة' }, 400);
+      const designer = await env.DB.prepare("SELECT User_ID FROM Users WHERE User_ID=? AND Role='Designer'").bind(Number(body.designer_id)).first();
+      if (!designer) return json({ error: 'المصمم المختار غير موجود' }, 400);
+      await env.DB.prepare("UPDATE Orders SET Approval_Status='approved', Status='قيد التصميم', Designer_ID=?, Agent_Approved_At=CURRENT_TIMESTAMP, Agent_Approved_By=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?")
+        .bind(designer.User_ID, a.user.User_ID, order.Task_ID).run();
+      return json({ success: true, order: await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(order.Task_ID).first() });
+    }
+
     const status = path.match(/^\/api\/orders\/(\d+)\/status$/);
     if (status && request.method === 'PUT') {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response; const order = await accessibleOrder(env, a.user, Number(status[1])); if (!order) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
@@ -193,7 +250,10 @@ export default {
     const fileRoute = path.match(/^\/api\/files\/(upload|list|download)\/(\d+)$/);
     if (fileRoute) {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response; const action = fileRoute[1], taskId = Number(fileRoute[2]), order = await accessibleOrder(env, a.user, taskId); if (!order) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
-      if (action === 'list' && request.method === 'GET') return json({ files: (await env.DB.prepare('SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_Type, Is_Current DESC, Created_At DESC').bind(taskId).all()).results });
+      if (action === 'list' && request.method === 'GET') {
+        const files = (await env.DB.prepare('SELECT * FROM Order_Files WHERE Task_ID=? ORDER BY File_Type, Is_Current DESC, Created_At DESC').bind(taskId).all()).results;
+        return request.headers.get('X-Requested-With') ? json(files) : json({ files });
+      }
       if (action === 'upload' && request.method === 'POST') {
         const form = await request.formData(), files = form.getAll('files').filter(x => x instanceof File); if (!files.length) return json({ error: 'لم يتم اختيار ملفات' }, 400);
         const saved = [];
