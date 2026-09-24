@@ -16,6 +16,12 @@ const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(
 const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers } });
 const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+async function concurrently(items, limit, work) {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) { const index = next++; await work(items[index], index); }
+  }));
+}
 function loginPage(error = '') {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>body{margin:0;font-family:system-ui;background:#101827;color:#e5e7eb;display:grid;min-height:100vh;place-items:center}.card{width:min(390px,90vw);background:#1f2937;border:1px solid #374151;border-radius:16px;padding:28px}h1{margin-top:0}label{display:block;margin:14px 0 6px}input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;border:1px solid #4b5563;font:inherit}input{background:#111827;color:#fff}button{margin-top:20px;background:#f59e0b;color:#111827;font-weight:700;border:0}.error{background:#7f1d1d;padding:10px;border-radius:8px}</style></head><body><main class="card"><h1>ورشة كازانجي</h1><p>تسجيل الدخول إلى نظام إدارة الورشة</p>${error ? `<p class="error">${esc(error)}</p>` : ''}<form method="post" action="/login"><label>اسم المستخدم</label><input name="username" required autocomplete="username"><label>كلمة المرور</label><input type="password" name="password" required autocomplete="current-password"><button type="submit">دخول</button></form></main></body></html>`;
 }
@@ -402,15 +408,15 @@ export default {
       const form = await request.formData(), images = form.getAll('images').filter(file => file instanceof File);
       if (!images.length) return json({ error: 'لم يتم اختيار أي صورة' }, 400);
       if (images.length > 50 || images.some(file => file.size > 10 * 1024 * 1024)) return json({ error: 'الحد الأقصى 50 صورة و10 ميغابايت للصورة' }, 400);
+      if (images.some(file => !file.type.startsWith('image/'))) return json({ error: 'يُسمح برفع الصور فقط في المكتبة' }, 400);
       const category = String(form.get('category') || 'عام').slice(0, 100), saved = [];
-      for (const file of images) {
-        if (!file.type.startsWith('image/')) return json({ error: 'يُسمح برفع الصور فقط في المكتبة' }, 400);
+      await concurrently(images, 3, async file => {
         const key = `library-images/${crypto.randomUUID()}-${cleanName(file.name)}`;
         await env.FILES.put(key, file.stream(), { httpMetadata: { contentType: file.type } });
         const created = await env.DB.prepare('INSERT INTO Agent_Images (Category, Original_Name, Stored_Name, File_Path, File_Size, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?)')
           .bind(category, file.name, key.split('/').at(-1), `r2://${key}`, file.size, a.user.User_ID).run();
         saved.push({ Image_ID: created.meta.last_row_id, Original_Name: file.name });
-      }
+      });
       return json({ success: true, images: saved }, 201);
     }
     if (path === '/api/orders/agent/pricing' && request.method === 'GET') {

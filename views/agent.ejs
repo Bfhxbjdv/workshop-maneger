@@ -261,7 +261,7 @@
         col.className = 'col-6 col-md-4 col-lg-3';
         col.innerHTML = `
           <div class="card h-100 image-card ${isSelected ? 'selected' : ''}" onclick="toggleImage(${img.Image_ID}, this)">
-            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${escapeImageText(img.Original_Name)}" class="card-img-top" onerror="this.classList.add('d-none'); this.nextElementSibling.classList.remove('d-none')">
+            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${escapeImageText(img.Original_Name)}" class="card-img-top" loading="lazy" decoding="async" onerror="this.classList.add('d-none'); this.nextElementSibling.classList.remove('d-none')">
             <div class="d-none d-flex align-items-center justify-content-center bg-light text-muted" style="height:180px;">
               الصورة غير متاحة — يرجى إعادة رفعها
             </div>

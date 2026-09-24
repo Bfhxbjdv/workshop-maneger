@@ -781,7 +781,7 @@
         const hasDesign = img.Design_ID ? `<span class="badge bg-success">مرتبط بتصميم: ${escapeImageText(img.Design_Name)}</span>` : '<span class="badge bg-secondary">مكتبة مستقلة</span>';
         col.innerHTML = `
           <div class="card h-100">
-            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${escapeImageText(img.Original_Name)}" class="card-img-top bg-light" style="height:180px;object-fit:contain" onerror="this.classList.add('d-none'); this.nextElementSibling.classList.remove('d-none')">
+            <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${escapeImageText(img.Original_Name)}" class="card-img-top bg-light" style="height:180px;object-fit:contain" loading="lazy" decoding="async" onerror="this.classList.add('d-none'); this.nextElementSibling.classList.remove('d-none')">
             <div class="d-none d-flex align-items-center justify-content-center bg-light text-muted" style="height:180px">الصورة غير متاحة — يرجى إعادة رفعها</div>
             <div class="card-body p-2">
               <small class="text-truncate d-block fw-bold">${escapeImageText(img.Original_Name)}</small>
