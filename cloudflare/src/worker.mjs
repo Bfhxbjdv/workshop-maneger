@@ -7,12 +7,13 @@ import routerTemplate from '../../views/router.ejs';
 import clientsTemplate from '../../views/clients.ejs';
 import inventoryTemplate from '../../views/inventory.ejs';
 import invoicesTemplate from '../../views/invoices.ejs';
+import usersTemplate from '../../views/users.ejs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
 const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers } });
-const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices']);
+const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 function loginPage(error = '') {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>body{margin:0;font-family:system-ui;background:#101827;color:#e5e7eb;display:grid;min-height:100vh;place-items:center}.card{width:min(390px,90vw);background:#1f2937;border:1px solid #374151;border-radius:16px;padding:28px}h1{margin-top:0}label{display:block;margin:14px 0 6px}input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;border:1px solid #4b5563;font:inherit}input{background:#111827;color:#fff}button{margin-top:20px;background:#f59e0b;color:#111827;font-weight:700;border:0}.error{background:#7f1d1d;padding:10px;border-radius:8px}</style></head><body><main class="card"><h1>ورشة كازانجي</h1><p>تسجيل الدخول إلى نظام إدارة الورشة</p>${error ? `<p class="error">${esc(error)}</p>` : ''}<form method="post" action="/login"><label>اسم المستخدم</label><input name="username" required autocomplete="username"><label>كلمة المرور</label><input type="password" name="password" required autocomplete="current-password"><button type="submit">دخول</button></form></main></body></html>`;
@@ -144,6 +145,7 @@ export default {
       if (path === '/clients' && permitted(user, 'clients')) return html(clientsTemplate);
       if (path === '/inventory' && permitted(user, 'inventory')) return html(inventoryTemplate);
       if (path === '/invoices' && permitted(user, 'invoices')) return html(invoicesTemplate.replaceAll('SYP', 'USD'));
+      if (path === '/users' && user.Role === 'Admin') return html(usersTemplate);
       return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
     }
 
@@ -175,7 +177,45 @@ export default {
     if (path === '/api/users' && request.method === 'GET') {
       const a = await auth(request, env); if (a.response) return a.response;
       if (a.user.Role !== 'Admin') return json({ error: 'هذه البيانات للمدير فقط' }, 403);
-      return json((await env.DB.prepare('SELECT User_ID, Name, Role, Username, Created_At FROM Users ORDER BY Name').all()).results);
+      return json((await env.DB.prepare('SELECT User_ID, Name, Role, Username, Permissions, Created_At FROM Users ORDER BY Name').all()).results);
+    }
+    if (path === '/api/users' && request.method === 'POST') {
+      const a = await auth(request, env); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'إدارة المستخدمين للمدير فقط' }, 403);
+      const body = await request.json().catch(() => ({})), name = String(body.Name || '').trim(), username = String(body.Username || '').trim(), password = String(body.Password || '');
+      const roles = new Set(['Admin', 'Designer', 'Laser_Op', 'Router_Op', 'Agent', 'Custom']);
+      if (!name || !username || password.length < 8 || !roles.has(body.Role)) return json({ error: 'أدخل الاسم واسم المستخدم وكلمة مرور من 8 أحرف على الأقل والدور الصحيح' }, 400);
+      try {
+        const created = await env.DB.prepare('INSERT INTO Users (Name, Username, Password, Role, Permissions) VALUES (?, ?, ?, ?, ?)').bind(name, username, await bcrypt.hash(password, 12), body.Role, JSON.stringify(body.Role === 'Custom' && body.Permissions && typeof body.Permissions === 'object' ? body.Permissions : {})).run();
+        return json({ success: true, User_ID: created.meta.last_row_id }, 201);
+      } catch { return json({ error: 'اسم المستخدم مستخدم بالفعل' }, 409); }
+    }
+    const userRoute = path.match(/^\/api\/users\/(\d+)$/);
+    if (userRoute) {
+      const a = await auth(request, env); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'إدارة المستخدمين للمدير فقط' }, 403);
+      const userId = Number(userRoute[1]), target = await env.DB.prepare('SELECT User_ID, Name, Username, Role, Permissions, Created_At FROM Users WHERE User_ID=?').bind(userId).first();
+      if (!target) return json({ error: 'المستخدم غير موجود' }, 404);
+      if (request.method === 'GET') return json(target);
+      if (request.method === 'PUT') {
+        const body = await request.json().catch(() => ({})), name = String(body.Name || '').trim(), username = String(body.Username || '').trim();
+        const roles = new Set(['Admin', 'Designer', 'Laser_Op', 'Router_Op', 'Agent', 'Custom']);
+        if (!name || !username || !roles.has(body.Role)) return json({ error: 'بيانات المستخدم غير مكتملة' }, 400);
+        if (userId === a.user.User_ID && body.Role !== 'Admin') return json({ error: 'لا يمكن إزالة صلاحية المدير من حسابك الحالي' }, 400);
+        try {
+          const password = String(body.Password || '');
+          if (password) {
+            if (password.length < 8) return json({ error: 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل' }, 400);
+            await env.DB.prepare('UPDATE Users SET Name=?, Username=?, Password=?, Role=?, Permissions=? WHERE User_ID=?').bind(name, username, await bcrypt.hash(password, 12), body.Role, JSON.stringify(body.Role === 'Custom' && body.Permissions && typeof body.Permissions === 'object' ? body.Permissions : {}), userId).run();
+          } else await env.DB.prepare('UPDATE Users SET Name=?, Username=?, Role=?, Permissions=? WHERE User_ID=?').bind(name, username, body.Role, JSON.stringify(body.Role === 'Custom' && body.Permissions && typeof body.Permissions === 'object' ? body.Permissions : {}), userId).run();
+          return json({ success: true });
+        } catch { return json({ error: 'اسم المستخدم مستخدم بالفعل' }, 409); }
+      }
+      if (request.method === 'DELETE') {
+        if (userId === a.user.User_ID) return json({ error: 'لا يمكن حذف حسابك الحالي' }, 400);
+        await env.DB.prepare('DELETE FROM Users WHERE User_ID=?').bind(userId).run();
+        return json({ success: true });
+      }
     }
 
     if (path === '/api/clients/all' && request.method === 'GET') {
