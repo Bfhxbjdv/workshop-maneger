@@ -213,9 +213,42 @@ export default {
       }
       if (request.method === 'POST') {
         const b = await request.json(); if (!b.Client_ID || !['Laser', 'Router'].includes(b.Machine_Type)) return json({ error: 'بيانات الطلب غير مكتملة' }, 400);
-        const pending = a.user.Role === 'Agent', result = await env.DB.prepare("INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Material_ID, Material_Qty, Quantity_Unit, Price, Notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(b.Client_ID, b.Designer_ID || null, a.user.User_ID, b.Machine_Type, pending ? 'بانتظار الموافقة' : 'قيد التصميم', pending ? 'pending' : 'approved', b.Material_ID || null, Number(b.Material_Qty || 0), b.Quantity_Unit === 'قطعة' ? 'قطعة' : 'لوح', Number(b.Price || 0), b.Notes || '').run();
-        return json({ order: await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(result.meta.last_row_id).first() }, 201);
+        const pending = a.user.Role === 'Agent';
+        const finalPrice = Number(b.Final_Price ?? b.Price ?? 0), agentPrice = Number(b.Agent_Price ?? 0), commission = Number(b.Agent_Commission ?? 0);
+        const result = await env.DB.prepare("INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Material_ID, Material_Qty, Quantity_Unit, Price, Agent_Price, Agent_Commission, Final_Price, Notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(b.Client_ID, b.Designer_ID || null, a.user.User_ID, b.Machine_Type, pending ? 'بانتظار الموافقة' : 'قيد التصميم', pending ? 'pending' : 'approved', b.Material_ID || null, Number(b.Material_Qty || 0), b.Quantity_Unit === 'قطعة' ? 'قطعة' : 'لوح', finalPrice, agentPrice, commission, finalPrice, b.Notes || '').run();
+        const taskId = result.meta.last_row_id;
+        const imageIds = Array.isArray(b.Image_IDs) ? b.Image_IDs.map(Number).filter(Number.isInteger).slice(0, 30) : [];
+        for (const imageId of imageIds) {
+          const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(imageId).first();
+          if (image) await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, 'image', 1, ?)")
+            .bind(taskId, image.Original_Name, image.Stored_Name, image.File_Path, image.File_Size, a.user.User_ID).run();
+        }
+        const order = await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(taskId).first();
+        return json({ Task_ID: taskId, order }, 201);
       }
+    }
+
+    if (path === '/api/orders/agent/images' && request.method === 'GET') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const images = (await env.DB.prepare('SELECT * FROM Agent_Images ORDER BY Created_At DESC LIMIT 200').all()).results;
+      for (const image of images) image.Materials = (await env.DB.prepare('SELECT i.* FROM Inventory i JOIN Agent_Image_Materials m ON m.Material_ID=i.Material_ID WHERE m.Image_ID=?').bind(image.Image_ID).all()).results;
+      return json({ images });
+    }
+    if (path === '/api/orders/agent/pricing' && request.method === 'GET') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const pricing = (await env.DB.prepare('SELECT * FROM Product_Pricing WHERE Is_Active=1 ORDER BY Product_Name').all()).results;
+      for (const product of pricing) product.Materials = (await env.DB.prepare('SELECT i.*, p.Price FROM Product_Material_Pricing p JOIN Inventory i ON i.Material_ID=p.Material_ID WHERE p.Pricing_ID=? AND p.Is_Active=1').bind(product.Pricing_ID).all()).results;
+      return json({ pricing });
+    }
+
+    const agentImageFile = path.match(/^\/api\/orders\/agent\/images\/(\d+)\/file$/);
+    if (agentImageFile && request.method === 'GET') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(Number(agentImageFile[1])).first();
+      if (!image?.File_Path?.startsWith('r2://')) return json({ error: 'الصورة غير متاحة' }, 404);
+      const object = await env.FILES.get(image.File_Path.slice(5)); if (!object) return json({ error: 'الصورة غير موجودة في التخزين' }, 404);
+      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `inline; filename="${cleanName(image.Original_Name)}"` } });
     }
 
     if (path === '/api/orders/pending' && request.method === 'GET') {
