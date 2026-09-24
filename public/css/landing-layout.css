@@ -125,10 +125,45 @@ figure { margin: 0; }
   .hero p { margin: 13px auto 18px; font-size: 14px; line-height: 1.85; }
   .buttons { gap: 8px; }
   .cta, .more { min-height: 44px; padding: 11px 16px; font-size: 13px; }
-  .hero-visual { min-height: 270px; }
-  .hero-image { inset: 0 7% 5% 0; border-radius: 38% 38% 16px 16px; }
-  .hero-inset { width: 35%; height: 34%; border-width: 5px; border-radius: 15px; }
-  .hero-label { bottom: 10%; padding: 9px 11px; gap: 8px; }
+  .hero-visual {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-rows: 210px auto;
+    gap: 10px;
+    min-height: 0;
+  }
+  .hero-image,
+  .hero-inset {
+    position: relative;
+    inset: auto;
+    height: 210px;
+    border-radius: 16px;
+  }
+  .hero-image {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    box-shadow: 0 16px 36px #34271916;
+  }
+  .hero-inset {
+    grid-column: 2;
+    grid-row: 1;
+    width: auto;
+    min-width: 0;
+    border: 0;
+    box-shadow: 0 16px 36px #34271916;
+  }
+  .hero-label {
+    position: relative;
+    inset: auto;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: center;
+    width: max-content;
+    max-width: 100%;
+    padding: 9px 11px;
+    gap: 8px;
+  }
   .hero-label b { font-size: 11px; }
   .hero-label small { font-size: 9px; }
 
