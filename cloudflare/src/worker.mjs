@@ -8,6 +8,7 @@ import clientsTemplate from '../../views/clients.ejs';
 import inventoryTemplate from '../../views/inventory.ejs';
 import invoicesTemplate from '../../views/invoices.ejs';
 import usersTemplate from '../../views/users.ejs';
+import expensesTemplate from '../../views/expenses.ejs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -146,6 +147,7 @@ export default {
       if (path === '/inventory' && permitted(user, 'inventory')) return html(inventoryTemplate);
       if (path === '/invoices' && permitted(user, 'invoices')) return html(invoicesTemplate.replaceAll('SYP', 'USD'));
       if (path === '/users' && user.Role === 'Admin') return html(usersTemplate);
+      if (path === '/expenses' && user.Role === 'Admin') return html(legacyRolePage(expensesTemplate, { name: user.Name }));
       return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
     }
 
@@ -172,6 +174,29 @@ export default {
         env.DB.prepare('SELECT l.*, u.Name AS User_Name FROM System_Logs l LEFT JOIN Users u ON u.User_ID=l.User_ID ORDER BY l.Created_At DESC LIMIT 10').all()
       ]);
       return json({ totalUsers, totalClients, totalOrders, totalInvoices, totalExpenses: Number(totalExpenses?.total || 0), totalRevenue: Number(totalRevenue?.total || 0), pendingUploads, recentLogs: recentLogs.results });
+    }
+
+    if (path === '/admin/api/expenses') {
+      const a = await auth(request, env); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'إدارة المصروفات للمدير فقط' }, 403);
+      if (request.method === 'GET') {
+        const term = `%${String(url.searchParams.get('search') || '').trim()}%`;
+        const expenses = (await env.DB.prepare('SELECT * FROM Expenses WHERE Description LIKE ? OR Category LIKE ? ORDER BY Expense_Date DESC, Expense_ID DESC LIMIT 100').bind(term, term).all()).results;
+        return json({ expenses, page: 1, pages: 1 });
+      }
+      if (request.method === 'POST') {
+        const body = await request.json().catch(() => ({})), description = String(body.Description || '').trim(), amount = Number(body.Amount);
+        if (!description || !Number.isFinite(amount) || amount < 0) return json({ error: 'الوصف والمبلغ الصحيحان مطلوبان' }, 400);
+        const created = await env.DB.prepare('INSERT INTO Expenses (Description, Category, Amount, Expense_Date, Notes) VALUES (?, ?, ?, ?, ?)').bind(description, String(body.Category || 'أخرى'), amount, String(body.Expense_Date || new Date().toISOString().slice(0, 10)), String(body.Notes || '')).run();
+        return json({ success: true, Expense_ID: created.meta.last_row_id }, 201);
+      }
+    }
+    const expenseRoute = path.match(/^\/admin\/api\/expenses\/(\d+)$/);
+    if (expenseRoute && request.method === 'DELETE') {
+      const a = await auth(request, env); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'إدارة المصروفات للمدير فقط' }, 403);
+      await env.DB.prepare('DELETE FROM Expenses WHERE Expense_ID=?').bind(Number(expenseRoute[1])).run();
+      return json({ success: true });
     }
 
     if (path === '/api/users' && request.method === 'GET') {
