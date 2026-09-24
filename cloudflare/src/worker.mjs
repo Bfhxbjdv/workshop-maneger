@@ -1,24 +1,17 @@
 import bcrypt from 'bcryptjs';
-import ejs from 'ejs';
-import loginTemplate from '../../views/login.ejs';
-import dashboardTemplate from '../../views/dashboard.ejs';
-import adminTemplate from '../../views/admin.ejs';
-import designerTemplate from '../../views/designer.ejs';
-import laserTemplate from '../../views/laser.ejs';
-import routerTemplate from '../../views/router.ejs';
-import agentTemplate from '../../views/agent.ejs';
-import clientsTemplate from '../../views/clients.ejs';
-import inventoryTemplate from '../../views/inventory.ejs';
-import designsTemplate from '../../views/designs.ejs';
-import agentsTemplate from '../../views/agents.ejs';
-import expensesTemplate from '../../views/expenses.ejs';
-import invoicesTemplate from '../../views/invoices.ejs';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
 const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers } });
-const templates = { '/login': loginTemplate, '/': dashboardTemplate, '/admin': adminTemplate, '/designer': designerTemplate, '/laser': laserTemplate, '/router': routerTemplate, '/agent': agentTemplate, '/clients': clientsTemplate, '/inventory': inventoryTemplate, '/designs': designsTemplate, '/agents': agentsTemplate, '/expenses': expensesTemplate, '/invoices': invoicesTemplate };
+const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices']);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+function loginPage(error = '') {
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>body{margin:0;font-family:system-ui;background:#101827;color:#e5e7eb;display:grid;min-height:100vh;place-items:center}.card{width:min(390px,90vw);background:#1f2937;border:1px solid #374151;border-radius:16px;padding:28px}h1{margin-top:0}label{display:block;margin:14px 0 6px}input,button{box-sizing:border-box;width:100%;padding:12px;border-radius:8px;border:1px solid #4b5563;font:inherit}input{background:#111827;color:#fff}button{margin-top:20px;background:#f59e0b;color:#111827;font-weight:700;border:0}.error{background:#7f1d1d;padding:10px;border-radius:8px}</style></head><body><main class="card"><h1>ورشة كازانجي</h1><p>تسجيل الدخول إلى نظام إدارة الورشة</p>${error ? `<p class="error">${esc(error)}</p>` : ''}<form method="post" action="/login"><label>اسم المستخدم</label><input name="username" required autocomplete="username"><label>كلمة المرور</label><input type="password" name="password" required autocomplete="current-password"><button type="submit">دخول</button></form></main></body></html>`;
+}
+function appPage(user) {
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>body{margin:0;font-family:system-ui;background:#f3f4f6;color:#111827}header{background:#111827;color:#fff;padding:18px}main{padding:24px;max-width:1000px;margin:auto}.card{background:#fff;border-radius:12px;padding:22px;box-shadow:0 1px 3px #0001}a{color:#b45309;font-weight:700}</style></head><body><header>ورشة كازانجي — ${esc(user.name)}</header><main><section class="card"><h1>مرحبًا ${esc(user.name)}</h1><p>الدور: ${esc(user.role)}</p><p>تم تشغيل نسخة Cloudflare التجريبية. الواجهات التفصيلية ومسارات العمل تُنقل تدريجيًا إلى واجهة متوافقة مع Workers.</p><p><a href="/api/auth/me">فحص الجلسة</a> · <a href="/logout">تسجيل الخروج</a></p></section></main></body></html>`;
+}
 
 function cookies(request) {
   return Object.fromEntries((request.headers.get('cookie') || '').split(';').map(v => v.trim().split('=').map(decodeURIComponent)).filter(v => v[0]));
@@ -81,19 +74,19 @@ export default {
     if (path === '/login' && request.method === 'POST') {
       const form = await request.formData();
       const found = await env.DB.prepare('SELECT * FROM Users WHERE Username=?').bind(String(form.get('username') || '')).first();
-      if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) return html(ejs.render(loginTemplate, { error: 'اسم المستخدم أو كلمة المرور غير صحيحة' }), 401);
+      if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) return html(loginPage('اسم المستخدم أو كلمة المرور غير صحيحة'), 401);
       const token = await makeToken(found, env.SESSION_SECRET);
       return new Response(null, { status: 302, headers: { location: '/', 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` } });
     }
-    if (request.method === 'GET' && templates[path]) {
+    if (request.method === 'GET' && pagePaths.has(path)) {
       const user = await userFor(request, env);
-      if (path === '/login') return user ? Response.redirect(new URL('/', request.url), 302) : html(ejs.render(loginTemplate, { error: null }));
+      if (path === '/login') return user ? Response.redirect(new URL('/', request.url), 302) : html(loginPage());
       if (!user) return Response.redirect(new URL('/login', request.url), 302);
       if (path === '/' && user.Role === 'Designer') return Response.redirect(new URL('/designer', request.url), 302);
       if (path === '/' && user.Role === 'Laser_Op') return Response.redirect(new URL('/laser', request.url), 302);
       if (path === '/' && user.Role === 'Router_Op') return Response.redirect(new URL('/router', request.url), 302);
       if (path === '/' && user.Role === 'Agent') return Response.redirect(new URL('/agent', request.url), 302);
-      return html(ejs.render(templates[path], { user: { id: user.User_ID, name: user.Name, role: user.Role, username: user.Username, permissions: JSON.parse(user.Permissions || '{}') }, assetVersion: 'cloudflare' }));
+      return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
     }
 
     if (path === '/api/auth/login' && request.method === 'POST') {
