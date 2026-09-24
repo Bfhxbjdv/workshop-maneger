@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&family=Cairo:wght@400;500;600;700;800&display=swap');
 
 :root { --ink:#172033; --canvas:#f5f7fb; --line:#e6eaf1; --brand:#3157d5; --brand-deep:#243f9a; --brand-soft:#edf1ff; --success:#0c9b68; --radius:16px; --shadow:0 12px 30px rgba(34,51,84,.08); }
 * { font-family:'Cairo',sans-serif; }
@@ -26,3 +26,45 @@ img[loading="lazy"] { content-visibility:auto; }
 .btn-back { position:fixed; bottom:22px; right:22px; z-index:1050; width:46px; height:46px; display:flex; align-items:center; justify-content:center; border:0; border-radius:14px; color:#fff; background:var(--ink); font-size:1.1rem; box-shadow:0 8px 20px rgba(23,32,51,.25); transition:transform .15s,box-shadow .15s; }.btn-back:hover { transform:translateY(-3px); box-shadow:0 12px 24px rgba(23,32,51,.32); }
 @media (max-width:768px) { .navbar { padding:.7rem 1rem; min-height:auto; }.navbar .container-fluid { justify-content:center; }.navbar-brand { width:100%; text-align:center; }.navbar-text { margin-inline-start:0; }.navbar .btn { font-size:.75rem; padding:.36rem .55rem; }.container-fluid.mt-3,.container-fluid.mt-4 { padding:0 1rem 1.5rem; }.card-body { padding:1rem; }.login-page .card { margin:1rem; }.login-page .card-body { padding:2rem!important; }.nav-tabs { width:100%; }.btn-back { width:42px; height:42px; right:14px; bottom:14px; } }
 @media print { .btn-back,.navbar,.btn,.nav-tabs { display:none!important; } body { background:#fff; }.card { box-shadow:none; } }
+
+/* Kazanji visual identity, shared by the sign-in screen and workshop app. */
+:root { --ink:#201f1d; --canvas:#fcfbf9; --line:#e9e4de; --brand:#a58d6e; --brand-deep:#826d53; --brand-soft:#f4f0eb; --success:#66816c; --radius:15px; --shadow:0 12px 30px rgba(58,47,34,.08); }
+* { font-family:'Alexandria','Cairo',sans-serif; }
+body { color:var(--ink); background:var(--canvas); }
+body:not(.login-page)::before { background:radial-gradient(circle at 84% -25%,rgba(165,141,110,.14),transparent 42%),linear-gradient(135deg,#f7f3ee 0%,#fcfbf9 66%,#f4f5f0 100%); }
+.navbar { background:linear-gradient(110deg,#282622,#494237 56%,#78684f)!important; box-shadow:0 6px 22px rgba(42,35,27,.16); }
+.navbar-brand { display:inline-flex; align-items:center; gap:.2rem; }
+.navbar-brand i { display:none!important; }
+.navbar-brand::before { content:''; display:inline-block; flex:0 0 28px; width:28px; height:42px; margin-inline-end:.45rem; background:url('/images/kazanji-group-logo.svg') center/contain no-repeat; }
+.navbar .btn:hover { color:#594a37; }
+.btn-primary { border-color:var(--brand); background:var(--brand); box-shadow:0 5px 13px rgba(99,79,53,.18); }
+.btn-primary:hover,.btn-primary:focus { border-color:var(--brand-deep); background:var(--brand-deep); }
+.btn-outline-primary { color:var(--brand-deep); border-color:#d8cbb8; }
+.btn-outline-primary:hover { background:var(--brand); border-color:var(--brand); }
+.form-control:focus,.form-select:focus { border-color:#b9a58a; box-shadow:0 0 0 .22rem rgba(165,141,110,.16); }
+.card-header i { color:var(--brand-deep); }
+.page-item.active .page-link { background:var(--brand); }
+.login-page { overflow:auto; background:radial-gradient(circle at 85% 10%,#d9cbb7 0,transparent 34%),linear-gradient(135deg,#282622,#51483b 62%,#82715a); }
+.login-page::before { border-color:rgba(255,255,255,.08); }
+.login-page::after { background:rgba(255,255,255,.06); }
+.login-page .card { border:1px solid rgba(165,141,110,.2)!important; background:rgba(252,251,249,.98); box-shadow:0 28px 70px rgba(32,31,29,.28); }
+.login-page .card-body { padding:2.75rem!important; }
+.login-logo { display:block; width:64px; height:94px; margin:0 auto 4px; object-fit:contain; }
+.login-brand-name { margin:0 0 8px; color:var(--brand-deep); font-weight:800; font-size:1.05rem; letter-spacing:.02em; }
+.login-page h3 { margin-top:.15rem!important; color:var(--ink); font-size:1.28rem; }
+.login-page .btn-primary { color:#fff; }
+.login-page .btn-lg { min-height:52px; }
+.login-page .form-control { background:#fff; }
+.workshop-admin-page .sidebar { background:rgba(248,245,240,.92)!important; border-inline-end:1px solid var(--line); }
+.workshop-admin-page .sidebar .nav-link { color:#5c554c; border-radius:9px; margin:2px 8px; padding:10px 13px; }
+.workshop-admin-page .sidebar .nav-link:hover { color:var(--brand-deep); background:#f0e9df; }
+.workshop-admin-page .sidebar .nav-link.active { color:#fff; background:var(--brand)!important; }
+.workshop-admin-page .sidebar .nav-link i { color:inherit; }
+.dashboard-page .card.bg-primary { background:linear-gradient(135deg,#a58d6e,#806a50)!important; }
+.dashboard-page .card.bg-success { background:linear-gradient(135deg,#80947a,#5d735e)!important; }
+.dashboard-page .card.bg-info { background:linear-gradient(135deg,#9a927e,#706754)!important; }
+.dashboard-page .card.bg-warning { background:linear-gradient(135deg,#ead8ad,#cfb77f)!important; }
+@media (max-width:768px) {
+  .navbar-brand::before { flex-basis:24px; width:24px; height:36px; }
+  .login-page .card-body { padding:1.75rem!important; }
+}
