@@ -195,7 +195,7 @@
             <h4 class="mb-0"><i class="bi bi-files"></i> التصاميم الجاهزة</h4>
             <div class="d-flex gap-2">
               <a class="btn btn-outline-primary" href="/designs"><i class="bi bi-grid"></i> عرض التصاميم</a>
-              <a class="btn btn-primary" href="/designs"><i class="bi bi-plus"></i> إضافة تصميم</a>
+              <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#designModal"><i class="bi bi-plus"></i> إضافة تصميم</button>
             </div>
           </div>
           <div class="card">
@@ -952,9 +952,19 @@
       const params = new URLSearchParams({ page: designPage, limit: 10 });
       if (search) params.append('search', search);
       if (status) params.append('status', status);
-      const d = await fetch('/api/agents/admin/designs?' + params.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
-      renderDesigns(d.designs || []);
-      renderPagination2('designsPagination', d.page, d.pages, loadDesigns);
+      const tbody = document.getElementById('designsTableBody');
+      try {
+        const response = await fetch('/api/agents/admin/designs?' + params.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' } });
+        const isJson = (response.headers.get('content-type') || '').includes('application/json');
+        const d = isJson ? await response.json() : {};
+        if (response.status === 401 || d.login) { window.location.href = '/login'; return; }
+        if (!response.ok || !isJson) throw new Error(d.error || 'تعذر تحميل قائمة التصاميم');
+        renderDesigns(d.designs || []);
+        renderPagination2('designsPagination', d.page || 1, d.pages || 1, loadDesigns);
+      } catch (error) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center text-danger py-4">${escapeImageText(error.message || 'تعذر تحميل التصاميم. تحقق من الاتصال ثم أعد المحاولة.')}</td></tr>`;
+        renderPagination2('designsPagination', 1, 1, loadDesigns);
+      }
     }
 
     function renderDesigns(designs) {
