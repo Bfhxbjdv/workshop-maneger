@@ -425,7 +425,10 @@ export default {
     if (path === '/api/orders/agent/images' && request.method === 'GET') {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response;
       const category = String(url.searchParams.get('category') || '').trim();
-      const images = (await env.DB.prepare(`SELECT ai.*, d.Name AS Design_Name FROM Agent_Images ai LEFT JOIN Designs d ON d.Design_ID=ai.Design_ID ${category ? 'WHERE ai.Category=?' : ''} ORDER BY ai.Created_At DESC LIMIT 200`).bind(...(category ? [category] : [])).all()).results;
+      const limit = Math.min(200, Math.max(1, Number.parseInt(url.searchParams.get('limit') || '200', 10) || 200));
+      const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+      const offset = Math.max(0, Number.parseInt(url.searchParams.get('offset') || String((page - 1) * limit), 10) || 0);
+      const images = (await env.DB.prepare(`SELECT ai.*, d.Name AS Design_Name FROM Agent_Images ai LEFT JOIN Designs d ON d.Design_ID=ai.Design_ID ${category ? 'WHERE ai.Category=?' : ''} ORDER BY ai.Created_At DESC LIMIT ? OFFSET ?`).bind(...(category ? [category, limit, offset] : [limit, offset])).all()).results;
       for (const image of images) image.Materials = (await env.DB.prepare('SELECT i.* FROM Inventory i JOIN Agent_Image_Materials m ON m.Material_ID=i.Material_ID WHERE m.Image_ID=?').bind(image.Image_ID).all()).results;
       return json({ images });
     }
@@ -437,9 +440,10 @@ export default {
       if (images.length > 50 || images.some(file => file.size > 10 * 1024 * 1024)) return json({ error: 'الحد الأقصى 50 صورة و10 ميغابايت للصورة' }, 400);
       if (images.some(file => !file.type.startsWith('image/'))) return json({ error: 'يُسمح برفع الصور فقط في المكتبة' }, 400);
       const category = String(form.get('category') || 'عام').slice(0, 100), saved = [];
-      await concurrently(images, 3, async file => {
+      const optimizedFlags = form.getAll('imageOptimized');
+      await concurrently(images, 3, async (file, index) => {
         const key = `library-images/${crypto.randomUUID()}-${cleanName(file.name)}`;
-        await env.FILES.put(key, file.stream(), { httpMetadata: { contentType: file.type } });
+        await env.FILES.put(key, file.stream(), { httpMetadata: { contentType: file.type }, ...(optimizedFlags[index] === '1' ? { customMetadata: { optimization: 'v1' } } : {}) });
         const created = await env.DB.prepare('INSERT INTO Agent_Images (Category, Original_Name, Stored_Name, File_Path, File_Size, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?)')
           .bind(category, file.name, key.split('/').at(-1), `r2://${key}`, file.size, a.user.User_ID).run();
         saved.push({ Image_ID: created.meta.last_row_id, Original_Name: file.name });
@@ -502,7 +506,27 @@ export default {
       const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(Number(agentImageFile[1])).first();
       if (!image?.File_Path?.startsWith('r2://')) return json({ error: 'الصورة غير متاحة' }, 404);
       const object = await env.FILES.get(image.File_Path.slice(5)); if (!object) return json({ error: 'الصورة غير موجودة في التخزين' }, 404);
-      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `inline; filename="${cleanName(image.Original_Name)}"` } });
+      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `inline; filename="${cleanName(image.Original_Name)}"`, 'cache-control': 'no-store', ...(object.customMetadata?.optimization === 'v1' ? { 'x-image-optimization': 'v1' } : {}) } });
+    }
+    const agentImageOptimize = path.match(/^\/api\/orders\/agent\/images\/(\d+)\/optimize$/);
+    if (agentImageOptimize && request.method === 'POST') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'تحسين صور المكتبة للمدير فقط' }, 403);
+      const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(Number(agentImageOptimize[1])).first();
+      if (!image?.File_Path?.startsWith('r2://')) return json({ error: 'الصورة غير متاحة' }, 404);
+      const key = image.File_Path.slice(5), current = await env.FILES.get(key);
+      if (!current) return json({ error: 'الصورة غير موجودة في التخزين' }, 404);
+      if (current.customMetadata?.optimization === 'v1') return json({ success: true, skipped: true });
+      const form = await request.formData(), file = form.get('image');
+      if (!(file instanceof File) || file.type !== 'image/webp' || !file.size || file.size > 10 * 1024 * 1024) return json({ error: 'ملف WebP المحسن غير صالح أو يتجاوز 10 ميغابايت' }, 400);
+      if (file.size >= current.size) return json({ success: true, skipped: true });
+      const storedName = cleanName(file.name);
+      await env.FILES.put(key, file.stream(), { httpMetadata: { contentType: 'image/webp' }, customMetadata: { optimization: 'v1' } });
+      await env.DB.batch([
+        env.DB.prepare('UPDATE Agent_Images SET Original_Name=?, Stored_Name=?, File_Size=? WHERE Image_ID=?').bind(file.name, storedName, file.size, image.Image_ID),
+        env.DB.prepare("UPDATE Order_Files SET Stored_Name=?, File_Size=? WHERE File_Path=? AND File_Type='image'").bind(storedName, file.size, image.File_Path)
+      ]);
+      return json({ success: true, oldSize: current.size, newSize: file.size, savedBytes: current.size - file.size });
     }
     const agentImageDelete = path.match(/^\/api\/orders\/agent\/images\/(\d+)$/);
     if (agentImageDelete && request.method === 'DELETE') {

@@ -8,6 +8,7 @@
   const replayedChanges = new WeakSet();
   const statusNodes = new WeakMap();
   const rasterTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/bmp', 'image/avif']);
+  const readyFiles = new WeakSet();
 
   function setStatus(input, message, state = 'info') {
     let node = statusNodes.get(input);
@@ -60,6 +61,12 @@
     }
   }
 
+  window.KazanjiImageCompression = {
+    optimizeFile: compressFile,
+    canOptimize: file => rasterTypes.has(file?.type) && typeof createImageBitmap === 'function',
+    isReady: file => readyFiles.has(file)
+  };
+
   async function processSelection(input, files, currentGeneration) {
     setStatus(input, 'جارٍ تحسين الصور تلقائيًا قبل الرفع…');
     const before = files.reduce((total, file) => total + file.size, 0);
@@ -72,6 +79,7 @@
         const index = nextIndex++;
         const original = files[index];
         const optimized = await compressFile(original);
+        if (rasterTypes.has(original.type)) readyFiles.add(optimized);
         output[index] = optimized;
         after += optimized.size;
         if (optimized !== original) converted++;

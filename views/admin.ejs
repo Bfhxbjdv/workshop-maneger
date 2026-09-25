@@ -158,9 +158,11 @@
                 <option value="تصاميم جاهزة">تصاميم جاهزة</option>
                 <option value="مراجع عملاء">مراجع عملاء</option>
               </select>
+              <button type="button" id="optimizeExistingLibraryImagesButton" class="btn btn-outline-success"><i class="bi bi-speedometer2"></i> تحسين الصور الحالية</button>
               <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#uploadImageModal"><i class="bi bi-upload"></i> رفع صور</button>
             </div>
           </div>
+          <div id="libraryImageOptimizationStatus" class="alert alert-info d-none py-2" role="status" aria-live="polite"></div>
           <div class="row g-2" id="libraryImagesGrid"></div>
         </div>
 
@@ -846,7 +848,10 @@
       button.textContent = 'جارٍ الرفع...';
       const formData = new FormData();
       formData.append('category', document.getElementById('uploadImageCategory').value);
-      files.forEach(file => formData.append('images', file, file.name));
+      files.forEach(file => {
+        formData.append('images', file, file.name);
+        formData.append('imageOptimized', window.KazanjiImageCompression?.isReady(file) ? '1' : '0');
+      });
       try {
         const res = await fetch('/api/orders/agent/images', { method: 'POST', body: formData });
         const data = await res.json();
@@ -858,6 +863,73 @@
         } else { alert(data.error || 'فشل الرفع'); }
       } catch (e) { alert('تعذر الرفع. تحقق من الاتصال وحاول مجدداً'); }
       finally { button.disabled = false; button.textContent = 'رفع'; }
+    }
+
+    async function optimizeExistingLibraryImages() {
+      const button = document.getElementById('optimizeExistingLibraryImagesButton');
+      const status = document.getElementById('libraryImageOptimizationStatus');
+      const helper = window.KazanjiImageCompression;
+      if (!helper?.optimizeFile) return alert('أداة تحسين الصور غير متاحة؛ حدّث الصفحة وحاول مجددًا.');
+      if (!confirm('سيتم ضغط الصور الحالية القابلة للتحسين واستبدال النسخ الكبيرة بها لتسريع الموقع. ستبقى روابط الصور والطلبات كما هي، لكن النسخة الأصلية كاملة الدقة لن تبقى. هل تريد المتابعة؟')) return;
+
+      button.disabled = true;
+      const originalLabel = button.innerHTML;
+      button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ التحسين…';
+      status.classList.remove('d-none', 'alert-danger', 'alert-success');
+      status.classList.add('alert-info');
+      let offset = 0, processed = 0, optimizedCount = 0, skipped = 0, errors = 0, savedBytes = 0;
+      const batchSize = 40;
+      const updateStatus = () => {
+        status.textContent = `تم فحص ${processed} صورة — خُفّض حجم ${optimizedCount}، لم تحتج ${skipped}، وتعذّر ${errors}. التوفير حتى الآن: ${(savedBytes / 1048576).toFixed(1)} ميغابايت.`;
+      };
+      async function processImage(image) {
+        try {
+          const source = await fetch(`/api/orders/agent/images/${image.Image_ID}/file`, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, cache: 'no-store' });
+          if (!source.ok) throw new Error('تعذر تنزيل الصورة');
+          if (source.headers.get('x-image-optimization') === 'v1') { skipped++; return; }
+          const blob = await source.blob();
+          const mime = source.headers.get('content-type') || blob.type;
+          const original = new File([blob], image.Original_Name || `image-${image.Image_ID}`, { type: mime });
+          if (!helper.canOptimize(original)) { skipped++; return; }
+          const optimized = await helper.optimizeFile(original);
+          if (optimized === original || optimized.size >= original.size) { skipped++; return; }
+          const data = new FormData();
+          data.append('image', optimized, optimized.name);
+          const response = await fetch(`/api/orders/agent/images/${image.Image_ID}/optimize`, { method: 'POST', body: data, headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+          const result = await response.json();
+          if (!response.ok || !result.success) throw new Error(result.error || 'تعذر حفظ الصورة المحسنة');
+          if (result.skipped) skipped++;
+          else { optimizedCount++; savedBytes += Number(result.savedBytes || 0); }
+        } catch { errors++; }
+        finally { processed++; updateStatus(); }
+      }
+
+      try {
+        while (true) {
+          const response = await fetch(`/api/orders/agent/images?limit=${batchSize}&offset=${offset}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, cache: 'no-store' });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'تعذر تحميل قائمة الصور');
+          const images = payload.images || [];
+          if (!images.length) break;
+          let index = 0;
+          await Promise.all(Array.from({ length: Math.min(2, images.length) }, async () => {
+            while (index < images.length) await processImage(images[index++]);
+          }));
+          offset += images.length;
+          if (images.length < batchSize) break;
+        }
+        status.classList.remove('alert-info');
+        status.classList.add(errors ? 'alert-danger' : 'alert-success');
+        status.textContent = `اكتمل الفحص: ${processed} صورة. تم تحسين ${optimizedCount} صورة وتوفير ${(savedBytes / 1048576).toFixed(1)} ميغابايت؛ ${skipped} صورة لم تحتج للتحسين أو امتدادها غير مدعوم${errors ? `، وتعذّر تحسين ${errors} صورة` : ''}.`;
+        await loadLibraryImages();
+      } catch (error) {
+        status.classList.remove('alert-info');
+        status.classList.add('alert-danger');
+        status.textContent = `${error.message || 'توقف تحسين الصور'} — اكتمل فحص ${processed} صورة حتى الآن. يمكنك إعادة المحاولة؛ الصور التي اكتمل تحسينها ستُتخطى.`;
+      } finally {
+        button.disabled = false;
+        button.innerHTML = originalLabel;
+      }
     }
 
     function deleteLibraryImage(id) {
@@ -1297,6 +1369,7 @@
     loadAdminStats();
     refreshPendingBadge();
     document.getElementById('uploadAdminImagesButton').addEventListener('click', uploadAdminImages);
+    document.getElementById('optimizeExistingLibraryImagesButton').addEventListener('click', optimizeExistingLibraryImages);
     document.getElementById('uploadImageFiles').addEventListener('change', previewChosenImages);
     document.getElementById('designFile').addEventListener('change', previewReadyDesignFile);
     document.getElementById('productPricingForm').addEventListener('submit', saveProductPricing);
