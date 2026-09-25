@@ -538,8 +538,14 @@
           body: JSON.stringify({ Full_Name: name, Phone_Number: phone, Notes: notes })
         });
         const data = await response.json();
-        if (data.Client_ID) {
-          selectClient(data.Client_ID, name);
+        if (response.status === 401 || data.login) {
+          alert('انتهت جلسة الدخول. سجّل الدخول مجددًا ثم أعد المحاولة.');
+          window.location.href = '/login';
+          return;
+        }
+        const client = data.client || data;
+        if (response.ok && client.Client_ID) {
+          selectClient(client.Client_ID, client.Full_Name || name);
           closeNewClientModal();
           document.getElementById('newClientName').value = '';
           document.getElementById('newClientPhone').value = '';
