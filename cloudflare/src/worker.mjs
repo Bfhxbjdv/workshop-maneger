@@ -28,6 +28,7 @@ const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(
 const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers } });
 const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+const withImageCompression = page => page.replace('</head>', '<script src="/js/image-compression.js?v=1"></script></head>');
 async function concurrently(items, limit, work) {
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -54,16 +55,16 @@ function legacyAdminPage(user) {
   // The old admin screen is intentionally kept as the source of truth for the
   // interface.  It only has one server-side value, so it can be safely filled
   // without bringing the Node/EJS runtime into a Worker.
-  return adminTemplate.replace(/<%=\s*user\.name\s*%>/g, esc(user.name));
+  return withImageCompression(adminTemplate.replace(/<%=\s*user\.name\s*%>/g, esc(user.name)));
 }
 function legacyRolePage(template, user) {
   // Legacy role pages use only a name, a cache-busting asset version, and a
   // few optional navigation tags.  Workers do not need a Node template engine
   // for these safe substitutions.
-  return template
+  return withImageCompression(template
     .replace(/<%=\s*user\.name\s*%>/g, esc(user.name))
     .replace(/<%=\s*assetVersion\s*%>/g, 'cloudflare')
-    .replace(/<%\s*if\s*\([\s\S]*?\)\s*\{\s*%>|<%\s*}\s*%>/g, '');
+    .replace(/<%\s*if\s*\([\s\S]*?\)\s*\{\s*%>|<%\s*}\s*%>/g, ''));
 }
 function appPage(user) {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ورشة كازانجي</title><style>
@@ -175,12 +176,12 @@ export default {
       if (path === '/designer' && user.Role === 'Designer') return html(legacyRolePage(designerTemplate, { name: user.Name }));
       if (path === '/laser' && user.Role === 'Laser_Op') return html(legacyRolePage(laserTemplate, { name: user.Name }));
       if (path === '/router' && user.Role === 'Router_Op') return html(legacyRolePage(routerTemplate, { name: user.Name }));
-      if (path === '/clients' && permitted(user, 'clients')) return html(clientsTemplate);
-      if (path === '/inventory' && permitted(user, 'inventory')) return html(inventoryTemplate);
-      if (path === '/invoices' && permitted(user, 'invoices')) return html(invoicesTemplate.replaceAll('SYP', 'USD'));
-      if (path === '/users' && user.Role === 'Admin') return html(usersTemplate);
+      if (path === '/clients' && permitted(user, 'clients')) return html(withImageCompression(clientsTemplate));
+      if (path === '/inventory' && permitted(user, 'inventory')) return html(withImageCompression(inventoryTemplate));
+      if (path === '/invoices' && permitted(user, 'invoices')) return html(withImageCompression(invoicesTemplate.replaceAll('SYP', 'USD')));
+      if (path === '/users' && user.Role === 'Admin') return html(withImageCompression(usersTemplate));
       if (path === '/expenses' && user.Role === 'Admin') return html(legacyRolePage(expensesTemplate, { name: user.Name }));
-      return html(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username }));
+      return html(withImageCompression(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username })));
     }
 
     if (path === '/api/auth/login' && request.method === 'POST') {

@@ -44,6 +44,9 @@ body:not(.login-page)::before { background:radial-gradient(circle at 84% -25%,rg
 .form-control:focus,.form-select:focus { border-color:#b9a58a; box-shadow:0 0 0 .22rem rgba(165,141,110,.16); }
 .card-header i { color:var(--brand-deep); }
 .page-item.active .page-link { background:var(--brand); }
+.image-optimization-status { color:#6d6862; }
+.image-optimization-status[data-state="success"] { color:#52745b; }
+.image-optimization-status[data-state="warning"] { color:#9b6c29; }
 .login-page { overflow:auto; background:radial-gradient(circle at 85% 10%,#d9cbb7 0,transparent 34%),linear-gradient(135deg,#282622,#51483b 62%,#82715a); }
 .login-page::before { border-color:rgba(255,255,255,.08); }
 .login-page::after { background:rgba(255,255,255,.06); }
