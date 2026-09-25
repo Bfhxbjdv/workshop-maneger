@@ -654,11 +654,11 @@
     }
 
     // ============ LIBRARY IMAGES ============
-    let imagePage = 1;
-    async function loadLibraryImages(page) {
-      if (page) imagePage = page;
+    async function loadLibraryImages() {
       const category = document.getElementById('imageCategoryFilter').value;
-      const params = new URLSearchParams({ page: imagePage, limit: 20 });
+      // Keep the existing gallery behavior (up to 200 images). Offset pagination
+      // is reserved for the background optimizer, which processes every batch.
+      const params = new URLSearchParams({ limit: 200 });
       if (category) params.append('category', category);
       const d = await fetch('/api/orders/agent/images?' + params.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' } }).then(r => r.json());
       renderLibraryImages(d.images || []);
