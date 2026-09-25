@@ -51,13 +51,13 @@
               <div class="col-md-3">
                 <div class="stat-box text-center p-3 bg-light rounded">
                   <h4 class="text-success mb-0" id="statRevenue">-</h4>
-                  <small class="text-muted">الإيرادات</small>
+                  <small class="text-muted">قيمة الطلبات غير المرفوضة</small>
                 </div>
               </div>
               <div class="col-md-3">
                 <div class="stat-box text-center p-3 bg-light rounded">
                   <h4 class="text-warning mb-0" id="statCommission">-</h4>
-                  <small class="text-muted">العمولة</small>
+                  <small class="text-muted">عمولات الطلبات</small>
                 </div>
               </div>
             </div>
@@ -127,7 +127,7 @@
               <div class="card-body text-center">
                 <i class="bi bi-currency-dollar display-6 text-success"></i>
                 <h5 class="mt-2" id="ovRevenue">-</h5>
-                <small class="text-muted">إجمالي الإيرادات</small>
+                <small class="text-muted">قيمة الطلبات غير المرفوضة</small>
               </div>
             </div>
           </div>
@@ -136,7 +136,7 @@
               <div class="card-body text-center">
                 <i class="bi bi-percent display-6 text-warning"></i>
                 <h5 class="mt-2" id="ovCommission">-</h5>
-                <small class="text-muted">إجمالي العمولة</small>
+                <small class="text-muted">عمولات الطلبات</small>
               </div>
             </div>
           </div>
@@ -184,7 +184,7 @@
         <div class="row g-3">
           <div class="col-lg-8">
             <div class="card h-100">
-              <div class="card-header"><i class="bi bi-graph-up"></i> اتجاه الطلبات والإيرادات (30 يوم)</div>
+              <div class="card-header"><i class="bi bi-graph-up"></i> اتجاه عدد الطلبات وقيمتها (30 يوم)</div>
               <div class="card-body">
                 <canvas id="trendChart" style="max-height:300px"></canvas>
               </div>
@@ -211,7 +211,7 @@
           </div>
           <div class="col-lg-4">
             <div class="card h-100">
-              <div class="card-header"><i class="bi bi-award"></i> أفضل 5 عملاء</div>
+              <div class="card-header"><i class="bi bi-award"></i> أعلى 5 عملاء بقيمة الطلبات غير المرفوضة</div>
               <div class="card-body" style="max-height:300px;overflow:auto" id="topClientsList">
                 <div class="text-center text-muted py-3">جاري التحميل...</div>
               </div>
@@ -239,7 +239,7 @@
                     <th>الاسم</th>
                     <th>الهاتف</th>
                     <th>الطلبات</th>
-                    <th>إجمالي الإنفاق</th>
+                    <th>قيمة الطلبات غير المرفوضة</th>
                     <th>تاريخ الإضافة</th>
                     <th>خيارات</th>
                   </tr>

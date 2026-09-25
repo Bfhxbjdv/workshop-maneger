@@ -63,8 +63,48 @@ test('agent summaries count each order price and commission once, regardless of 
   const charts = await get('/api/agents/1/stats');
   assert.equal(charts.dailyStats[0].revenue, 350);
   assert.equal(charts.dailyStats[0].commission, 70);
+  assert.equal(charts.topClients[0].order_value, 350);
   const clients = await get('/api/agents/1/clients');
-  assert.equal(clients.clients[0].total_spent, 350);
+  assert.equal(clients.clients[0].order_value, 350);
+});
+
+test('agent client order value excludes rejected orders and orders placed by other users', async () => {
+  const SQL = await initSqlJs();
+  const database = new SQL.Database();
+  const migrationDirectory = path.join(__dirname, '..', 'cloudflare', 'migrations');
+  database.exec(fs.readFileSync(path.join(migrationDirectory, '0001_initial.sql'), 'utf8'));
+  database.run("INSERT INTO Users (Name,Role,Username,Password) VALUES ('وكيل أول','Agent','agent-one','test'),('وكيل ثان','Agent','agent-two','test')");
+  database.run("INSERT INTO Agent_Profiles (User_ID,Status) VALUES (1,'active'),(2,'active')");
+  database.run("INSERT INTO Clients (Full_Name,Created_By,Agent_ID) VALUES ('عميل مشترك',1,1)");
+  database.run("INSERT INTO Orders (Client_ID,Created_By,Machine_Type,Status,Approval_Status,Material_Qty,Final_Price,Agent_Commission) VALUES (1,1,'Laser','قيد التصميم','approved',1,23,5)");
+  database.run("INSERT INTO Orders (Client_ID,Created_By,Machine_Type,Status,Approval_Status,Material_Qty,Final_Price,Agent_Commission) VALUES (1,1,'Laser','مرفوض','rejected',2,23,7)");
+  database.run("INSERT INTO Orders (Client_ID,Created_By,Machine_Type,Status,Approval_Status,Material_Qty,Final_Price,Agent_Commission) VALUES (1,1,'Laser','مرفوض','approved',3,23,11)");
+  database.run("INSERT INTO Orders (Client_ID,Created_By,Machine_Type,Status,Approval_Status,Material_Qty,Final_Price,Agent_Commission) VALUES (1,2,'Laser','قيد التصميم','approved',4,23,13)");
+
+  const { handleAgentsApi } = await import('../cloudflare/src/agents-api.mjs');
+  const env = { DB: d1(database) };
+  const admin = { User_ID: 10, Role: 'Admin' };
+  async function get(apiPath) {
+    const url = new URL(`https://example.test${apiPath}`);
+    const response = await handleAgentsApi(new Request(url), env, admin, url.pathname, url);
+    assert.equal(response.status, 200);
+    return response.json();
+  }
+
+  const charts = await get('/api/agents/1/stats');
+  assert.equal(charts.dailyStats[0].orders_count, 3);
+  assert.equal(charts.dailyStats[0].total_sheets, 1);
+  assert.equal(charts.dailyStats[0].revenue, 23);
+  assert.equal(charts.dailyStats[0].commission, 5);
+  assert.equal(charts.monthlyComparison[0].orders, 3);
+  assert.equal(charts.monthlyComparison[0].revenue, 23);
+  assert.equal(charts.monthlyComparison[0].commission, 5);
+  assert.equal(charts.statusBreakdown.reduce((sum, row) => sum + row.count, 0), 3);
+  assert.equal(charts.topClients[0].order_count, 3);
+  assert.equal(charts.topClients[0].order_value, 23);
+  const clients = await get('/api/agents/1/clients');
+  assert.equal(clients.clients[0].order_count, 3);
+  assert.equal(clients.clients[0].order_value, 23);
 });
 
 test('admin can create, edit, filter and remove an agent profile with its banking fields', async () => {

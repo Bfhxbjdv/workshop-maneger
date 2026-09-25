@@ -165,28 +165,34 @@ async function deleteAgent(env, agentId) {
   return json({ success: true, message: 'تم حذف الوكيل' });
 }
 
-async function pagedRows(env, url, from, where, values, select, order, resultKey) {
+async function pagedRows(env, url, from, where, values, select, order, resultKey, selectValues = []) {
   const { page, limit, offset } = pageOptions(url);
   const count = await env.DB.prepare(`SELECT COUNT(*) AS total ${from} ${where}`).bind(...values).first();
-  const rows = (await env.DB.prepare(`SELECT ${select} ${from} ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...values, limit, offset).all()).results;
+  const rows = (await env.DB.prepare(`SELECT ${select} ${from} ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).bind(...selectValues, ...values, limit, offset).all()).results;
   const total = Number(count?.total || 0);
   return json({ [resultKey]: rows, total, page, pages: Math.ceil(total / limit) });
 }
 
 async function agentStats(env, agentId, url) {
   const days = Math.min(365, Math.max(1, Number.parseInt(url.searchParams.get('days') || '30', 10) || 30));
+  const activeValue = "COALESCE(Approval_Status,'approved')!='rejected' AND COALESCE(Status,'') NOT IN ('مرفوض','ملغي','ملغى','rejected','cancelled')";
   const dailyStats = (await env.DB.prepare(`SELECT date(Created_At) AS date, COUNT(*) AS orders_count,
-    COALESCE(SUM(Material_Qty),0) AS total_sheets, COALESCE(SUM(Final_Price),0) AS revenue,
-    COALESCE(SUM(Agent_Commission),0) AS commission FROM Orders
+    COALESCE(SUM(CASE WHEN ${activeValue} THEN Material_Qty ELSE 0 END),0) AS total_sheets,
+    COALESCE(SUM(CASE WHEN ${activeValue} THEN Final_Price ELSE 0 END),0) AS revenue,
+    COALESCE(SUM(CASE WHEN ${activeValue} THEN Agent_Commission ELSE 0 END),0) AS commission FROM Orders
     WHERE Created_By=? AND Created_At>=datetime('now',?) GROUP BY date(Created_At) ORDER BY date`)
     .bind(agentId, `-${days} days`).all()).results;
   const statusBreakdown = (await env.DB.prepare('SELECT Status, COUNT(*) AS count FROM Orders WHERE Created_By=? GROUP BY Status').bind(agentId).all()).results;
   const monthlyComparison = (await env.DB.prepare(`SELECT strftime('%Y-%m',Created_At) AS month, COUNT(*) AS orders,
-    COALESCE(SUM(Final_Price),0) AS revenue, COALESCE(SUM(Agent_Commission),0) AS commission
+    COALESCE(SUM(CASE WHEN ${activeValue} THEN Final_Price ELSE 0 END),0) AS revenue,
+    COALESCE(SUM(CASE WHEN ${activeValue} THEN Agent_Commission ELSE 0 END),0) AS commission
     FROM Orders WHERE Created_By=? GROUP BY strftime('%Y-%m',Created_At) ORDER BY month DESC LIMIT 12`).bind(agentId).all()).results;
   const topClients = (await env.DB.prepare(`SELECT c.Client_ID, c.Full_Name, c.Phone_Number, COUNT(o.Task_ID) AS order_count,
-    COALESCE(SUM(o.Final_Price),0) AS total_spent FROM Clients c LEFT JOIN Orders o ON o.Client_ID=c.Client_ID
-    WHERE c.Agent_ID=? OR c.Created_By=? GROUP BY c.Client_ID ORDER BY total_spent DESC LIMIT 10`).bind(agentId, agentId).all()).results;
+    COALESCE(SUM(CASE WHEN COALESCE(o.Approval_Status,'approved')!='rejected'
+      AND COALESCE(o.Status,'') NOT IN ('مرفوض','ملغي','ملغى','rejected','cancelled')
+      THEN o.Final_Price ELSE 0 END),0) AS order_value
+    FROM Clients c LEFT JOIN Orders o ON o.Client_ID=c.Client_ID AND o.Created_By=?
+    WHERE c.Agent_ID=? OR c.Created_By=? GROUP BY c.Client_ID ORDER BY order_value DESC LIMIT 10`).bind(agentId, agentId, agentId).all()).results;
   return json({ dailyStats, statusBreakdown, monthlyComparison, topClients });
 }
 
@@ -200,8 +206,11 @@ async function agentSubresource(request, env, user, agentId, action, url) {
     const filter = search ? ' AND (c.Full_Name LIKE ? OR c.Phone_Number LIKE ?)' : '';
     if (search) values.push(`%${search}%`, `%${search}%`);
     return pagedRows(env, url, 'FROM Clients c', `WHERE (c.Agent_ID=? OR c.Created_By=?)${filter}`, values,
-      'c.*, (SELECT COUNT(*) FROM Orders WHERE Client_ID=c.Client_ID) AS order_count, (SELECT COALESCE(SUM(Final_Price),0) FROM Orders WHERE Client_ID=c.Client_ID) AS total_spent',
-      'c.Created_At DESC, c.Client_ID DESC', 'clients');
+      `c.*, (SELECT COUNT(*) FROM Orders o WHERE o.Client_ID=c.Client_ID AND o.Created_By=?) AS order_count,
+      (SELECT COALESCE(SUM(o.Final_Price),0) FROM Orders o WHERE o.Client_ID=c.Client_ID AND o.Created_By=?
+        AND COALESCE(o.Approval_Status,'approved')!='rejected'
+        AND COALESCE(o.Status,'') NOT IN ('مرفوض','ملغي','ملغى','rejected','cancelled')) AS order_value`,
+      'c.Created_At DESC, c.Client_ID DESC', 'clients', [agentId, agentId]);
   }
   if (action === 'orders' && request.method === 'GET') {
     const values = [agentId];

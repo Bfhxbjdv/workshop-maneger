@@ -80,8 +80,8 @@
           </div>
           <div class="row mb-3">
             <div class="col-md-4"><div class="card bg-danger text-white p-3 text-center"><h5 id="totalExpenses">0</h5><small>إجمالي المصروفات</small></div></div>
-            <div class="col-md-4"><div class="card bg-success text-white p-3 text-center"><h5 id="totalRevenue">0</h5><small>إجمالي الإيرادات</small></div></div>
-            <div class="col-md-4"><div class="card bg-info text-white p-3 text-center"><h5 id="netProfit">0</h5><small>صافي الربح</small></div></div>
+            <div class="col-md-4"><div class="card bg-success text-white p-3 text-center"><h5 id="totalRevenue">0</h5><small>قيمة الطلبات غير المرفوضة</small></div></div>
+            <div class="col-md-4"><div class="card bg-info text-white p-3 text-center"><h5 id="netProfit">0</h5><small>قيمة الطلبات بعد المصروفات (تقديري)</small></div></div>
           </div>
           <input type="text" id="expenseSearch" class="form-control mb-2" placeholder="بحث..." oninput="debounce(loadExpenses,300)()">
           <div class="table-responsive">
@@ -468,8 +468,8 @@
         <div class="col-md-3 mb-2"><div class="card stat-card bg-info text-white p-3 text-center"><h3>${d.totalOrders}</h3><small>الطلبات</small></div></div>
         <div class="col-md-3 mb-2"><div class="card stat-card bg-warning text-dark p-3 text-center"><h3>${d.totalInvoices}</h3><small>الفواتير</small></div></div>
         <div class="col-md-3 mb-2"><div class="card stat-card bg-danger text-white p-3 text-center"><h3>${parseFloat(d.totalExpenses).toFixed(2)}</h3><small>إجمالي المصروفات</small></div></div>
-        <div class="col-md-3 mb-2"><div class="card stat-card bg-success text-white p-3 text-center"><h3>${parseFloat(d.totalRevenue).toFixed(2)}</h3><small>إجمالي الإيرادات</small></div></div>
-        <div class="col-md-3 mb-2"><div class="card stat-card ${(d.totalRevenue - d.totalExpenses) >= 0 ? 'bg-primary' : 'bg-danger'} text-white p-3 text-center"><h3>${parseFloat(d.totalRevenue - d.totalExpenses).toFixed(2)}</h3><small>صافي الربح</small></div></div>
+        <div class="col-md-3 mb-2"><div class="card stat-card bg-success text-white p-3 text-center"><h3>${parseFloat(d.totalRevenue).toFixed(2)}</h3><small>قيمة الطلبات غير المرفوضة</small></div></div>
+        <div class="col-md-3 mb-2"><div class="card stat-card ${(d.totalRevenue - d.totalExpenses) >= 0 ? 'bg-primary' : 'bg-danger'} text-white p-3 text-center"><h3>${parseFloat(d.totalRevenue - d.totalExpenses).toFixed(2)}</h3><small>قيمة الطلبات بعد المصروفات (تقديري)</small></div></div>
         <div class="col-md-3 mb-2"><div class="card stat-card bg-secondary text-white p-3 text-center"><h3>${d.pendingUploads}</h3><small>بانتظار الرفع</small></div></div>
       `;
 

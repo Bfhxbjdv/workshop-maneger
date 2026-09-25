@@ -116,7 +116,7 @@ function renderTrendChart(canvasId, data) {
           tension: 0.3
         },
         {
-          label: 'الإيرادات',
+          label: 'قيمة الطلبات غير المرفوضة',
           data: revenueData,
           borderColor: '#198754',
           backgroundColor: 'rgba(25,135,84,0.1)',
@@ -189,7 +189,7 @@ function renderMonthlyChart(canvasId, data) {
       labels,
       datasets: [
         { label: 'الطلبات', data: ordersData, backgroundColor: 'rgba(13,110,253,0.7)', yAxisID: 'y' },
-        { label: 'الإيرادات', data: revenueData, backgroundColor: 'rgba(25,135,84,0.7)', yAxisID: 'y1' },
+        { label: 'قيمة الطلبات غير المرفوضة', data: revenueData, backgroundColor: 'rgba(25,135,84,0.7)', yAxisID: 'y1' },
         { label: 'العمولة', data: commissionData, backgroundColor: 'rgba(255,193,7,0.7)', yAxisID: 'y1' }
       ]
     },
@@ -278,8 +278,8 @@ async function exportAgents() {
       'الحالة': agent.Status,
       'العملاء': agent.Client_Count,
       'الطلبات': agent.Order_Count,
-      'الإيرادات USD': agent.Total_Revenue,
-      'العمولة USD': agent.Total_Commission,
+      'قيمة الطلبات غير المرفوضة USD': agent.Total_Revenue,
+      'عمولات الطلبات USD': agent.Total_Commission,
       'بانتظار الموافقة': agent.Pending_Orders,
       'تاريخ الانضمام': agent.Hired_Date || agent.Created_At
     })), 'agents');
@@ -289,7 +289,7 @@ async function exportAgents() {
 async function exportAgentClients() {
   await exportAgentRows('clients', rows => rows.map(client => ({
     'الاسم': client.Full_Name, 'الهاتف': client.Phone_Number,
-    'الطلبات': client.order_count, 'إجمالي الإنفاق USD': client.total_spent,
+    'الطلبات': client.order_count, 'قيمة الطلبات غير المرفوضة USD': client.order_value,
     'تاريخ الإضافة': client.Created_At
   })));
 }
@@ -541,7 +541,7 @@ async function loadAgentDetail() {
     }
     const topClients = document.getElementById('topClientsList');
     topClients.innerHTML = (charts.topClients || []).length
-      ? charts.topClients.map(client => `<div class="d-flex justify-content-between border-bottom py-2"><span>${agentsEscape(client.Full_Name)}</span><strong>${formatCurrency(Number(client.total_spent) || 0)}</strong></div>`).join('')
+      ? charts.topClients.map(client => `<div class="d-flex justify-content-between border-bottom py-2"><span>${agentsEscape(client.Full_Name)}</span><strong>${formatCurrency(Number(client.order_value) || 0)}</strong></div>`).join('')
       : '<div class="text-muted py-3">لا توجد بيانات عملاء بعد.</div>';
   } catch (error) { showAlert(error.message || 'تعذر تحميل تفاصيل الوكيل', 'danger'); }
 }
@@ -559,7 +559,7 @@ async function loadAgentClients(page = 1) {
     const data = await apiGet(`/api/agents/${id}/clients`, { page, limit: 20, search: document.getElementById('clientSearch').value.trim() });
     tbody.innerHTML = (data.clients || []).length ? data.clients.map(client => `<tr>
       <td>${Number(client.Client_ID)}</td><td>${agentsEscape(client.Full_Name)}</td><td>${agentsEscape(client.Phone_Number || '-')}</td>
-      <td>${Number(client.order_count) || 0}</td><td>${formatCurrency(Number(client.total_spent) || 0)}</td>
+      <td>${Number(client.order_count) || 0}</td><td>${formatCurrency(Number(client.order_value) || 0)}</td>
       <td>${formatDate(client.Created_At)}</td><td><a class="btn btn-sm btn-outline-primary" href="/client/${Number(client.Client_ID)}">عرض</a></td>
     </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">لا يوجد عملاء</td></tr>';
     renderPagination(data.total, data.page, data.pages, 'clientsPagination', loadAgentClients);
