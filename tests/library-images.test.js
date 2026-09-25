@@ -155,6 +155,9 @@ test('ready-design modal uploads a selected local file instead of accepting a st
   assert.match(admin, /fetch\('\/api\/designs', \{ method: 'POST'/);
   assert.match(admin, /previewReadyDesignFile/);
   assert.match(admin, /انتهت جلسة الدخول/);
+  assert.match(admin, /const form = event\.currentTarget/);
+  assert.match(admin, /form\.reset\(\)/);
+  assert.doesNotMatch(admin, /event\.currentTarget\.reset\(\)/);
   assert.doesNotMatch(admin, /id="designFilePath"/);
 });
 

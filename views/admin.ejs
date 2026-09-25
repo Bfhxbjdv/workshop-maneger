@@ -1003,6 +1003,7 @@
 
     async function saveReadyDesign(event) {
       event.preventDefault();
+      const form = event.currentTarget;
       const file = document.getElementById('designFile').files[0];
       const name = document.getElementById('designName').value.trim();
       if (!name || !file) return alert('اكتب اسم التصميم واختر ملفه من الكمبيوتر');
@@ -1016,7 +1017,7 @@
       formData.append('file', file, file.name);
       const thumbnail = document.getElementById('designThumbnail').files[0];
       if (thumbnail) formData.append('thumbnail', thumbnail, thumbnail.name);
-      const submit = event.currentTarget.querySelector('button[type="submit"]');
+      const submit = form.querySelector('button[type="submit"]');
       submit.disabled = true;
       submit.textContent = 'جارٍ رفع التصميم...';
       try {
@@ -1030,10 +1031,13 @@
         }
         if (!response.ok || !data.success) return alert(data.error || 'تعذر رفع التصميم');
         bootstrap.Modal.getOrCreateInstance(document.getElementById('designModal')).hide();
-        event.currentTarget.reset();
+        form.reset();
         document.getElementById('designUnit').value = 'مم';
         loadDesigns();
-      } catch (error) { console.error(error); alert('تعذر رفع التصميم. تحقق من الاتصال وحاول مجددًا'); }
+      } catch (error) {
+        console.error('Ready design upload failed:', error);
+        alert('تعذر إكمال رفع التصميم. قد يكون الملف وصل بالفعل؛ حدّث قائمة التصاميم قبل إعادة رفعه لتجنب التكرار.');
+      }
       finally { submit.disabled = false; submit.innerHTML = '<i class="bi bi-check-lg"></i> حفظ ورفع التصميم'; }
     }
 
