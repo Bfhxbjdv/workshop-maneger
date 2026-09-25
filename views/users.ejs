@@ -100,11 +100,12 @@
                 <i class="bi bi-key"></i> الصلاحيات المخصصة
               </div>
               <div class="card-body">
+                <p class="text-muted small mb-3">يمكن منح صلاحية الطلبات والعملاء وعرض المخزون والفواتير. لوحات الإدارة والمصروفات وإدارة المستخدمين متاحة للمدير فقط حاليًا.</p>
                 <div class="row">
                   <div class="col-md-6">
                     <div class="form-check form-switch mb-2">
-                      <input class="form-check-input" type="checkbox" id="perm_dashboard">
-                      <label class="form-check-label" for="perm_dashboard">لوحة التحكم</label>
+                      <input class="form-check-input" type="checkbox" id="perm_dashboard" disabled>
+                      <label class="form-check-label text-muted" for="perm_dashboard">لوحة التحكم (للمدير فقط)</label>
                     </div>
                     <div class="form-check form-switch mb-2">
                       <input class="form-check-input" type="checkbox" id="perm_clients">
@@ -116,25 +117,25 @@
                     </div>
                     <div class="form-check form-switch mb-2">
                       <input class="form-check-input" type="checkbox" id="perm_inventory">
-                      <label class="form-check-label" for="perm_inventory">إدارة المخزون</label>
+                      <label class="form-check-label" for="perm_inventory">عرض المخزون</label>
                     </div>
                   </div>
                   <div class="col-md-6">
                     <div class="form-check form-switch mb-2">
                       <input class="form-check-input" type="checkbox" id="perm_invoices">
-                      <label class="form-check-label" for="perm_invoices">الفواتير</label>
+                      <label class="form-check-label" for="perm_invoices">عرض الفواتير</label>
                     </div>
                     <div class="form-check form-switch mb-2">
-                      <input class="form-check-input" type="checkbox" id="perm_expenses">
-                      <label class="form-check-label" for="perm_expenses">المصروفات</label>
+                      <input class="form-check-input" type="checkbox" id="perm_expenses" disabled>
+                      <label class="form-check-label text-muted" for="perm_expenses">المصروفات (للمدير فقط)</label>
                     </div>
                     <div class="form-check form-switch mb-2">
-                      <input class="form-check-input" type="checkbox" id="perm_admin">
-                      <label class="form-check-label" for="perm_admin">لوحة تحكم المدير</label>
+                      <input class="form-check-input" type="checkbox" id="perm_admin" disabled>
+                      <label class="form-check-label text-muted" for="perm_admin">لوحة تحكم المدير (للمدير فقط)</label>
                     </div>
                     <div class="form-check form-switch mb-2">
-                      <input class="form-check-input" type="checkbox" id="perm_users">
-                      <label class="form-check-label" for="perm_users">إدارة المستخدمين</label>
+                      <input class="form-check-input" type="checkbox" id="perm_users" disabled>
+                      <label class="form-check-label text-muted" for="perm_users">إدارة المستخدمين (للمدير فقط)</label>
                     </div>
                   </div>
                 </div>
@@ -154,7 +155,10 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/main.js"></script>
   <script>
+    let existingCustomPermissions = {};
+
     function resetUserForm() {
+      existingCustomPermissions = {};
       document.getElementById('editUserId').value = '';
       document.getElementById('userName').value = '';
       document.getElementById('userUsername').value = '';
@@ -185,28 +189,29 @@
 
     function getPermissions() {
       return {
-        dashboard: document.getElementById('perm_dashboard').checked,
+        dashboard: Boolean(existingCustomPermissions.dashboard),
         clients: document.getElementById('perm_clients').checked,
         orders: document.getElementById('perm_orders').checked,
         inventory: document.getElementById('perm_inventory').checked,
         invoices: document.getElementById('perm_invoices').checked,
-        expenses: document.getElementById('perm_expenses').checked,
-        admin: document.getElementById('perm_admin').checked,
-        users: document.getElementById('perm_users').checked
+        expenses: Boolean(existingCustomPermissions.expenses),
+        admin: Boolean(existingCustomPermissions.admin),
+        users: Boolean(existingCustomPermissions.users)
       };
     }
 
     function setPermissions(perms) {
       try {
         const p = typeof perms === 'string' ? JSON.parse(perms) : perms;
-        document.getElementById('perm_dashboard').checked = p.dashboard || false;
+        existingCustomPermissions = Object.fromEntries(['dashboard', 'expenses', 'admin', 'users'].map(key => [key, Boolean(p?.[key])]));
+        document.getElementById('perm_dashboard').checked = false;
         document.getElementById('perm_clients').checked = p.clients || false;
         document.getElementById('perm_orders').checked = p.orders || false;
         document.getElementById('perm_inventory').checked = p.inventory || false;
         document.getElementById('perm_invoices').checked = p.invoices || false;
-        document.getElementById('perm_expenses').checked = p.expenses || false;
-        document.getElementById('perm_admin').checked = p.admin || false;
-        document.getElementById('perm_users').checked = p.users || false;
+        document.getElementById('perm_expenses').checked = false;
+        document.getElementById('perm_admin').checked = false;
+        document.getElementById('perm_users').checked = false;
       } catch {}
     }
 
@@ -224,7 +229,7 @@
       document.getElementById('userRole').value = user.Role;
       setPermissions(user.Permissions);
       togglePermissions();
-      new bootstrap.Modal(document.getElementById('userModal')).show();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('userModal')).show();
     }
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>

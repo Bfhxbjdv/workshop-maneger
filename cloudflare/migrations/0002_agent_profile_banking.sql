@@ -1,0 +1,3 @@
+ALTER TABLE Agent_Profiles ADD COLUMN Bank_Account TEXT;
+ALTER TABLE Agent_Profiles ADD COLUMN IBAN TEXT;
+ALTER TABLE Agent_Profiles ADD COLUMN Tax_Number TEXT;

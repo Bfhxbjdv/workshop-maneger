@@ -73,7 +73,12 @@
         const data = await res.json();
         if (!res.ok) { errEl.textContent = data.error || 'حدث خطأ'; errEl.classList.remove('d-none'); return; }
         okEl.classList.remove('d-none');
-        if (newUsername) document.querySelector('.navbar-text').innerHTML = `<i class="bi bi-person-circle"></i> ${newUsername}`;
+        if (newUsername) {
+          const accountLabel = document.querySelector('.navbar-text');
+          const icon = document.createElement('i');
+          icon.className = 'bi bi-person-circle';
+          accountLabel.replaceChildren(icon, document.createTextNode(` ${newUsername}`));
+        }
       } catch (e) { errEl.textContent = 'خطأ في الاتصال'; errEl.classList.remove('d-none'); }
     }
   </script>

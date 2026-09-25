@@ -22,28 +22,60 @@ function showToast(msg, type = 'info') {
   })();
   const colors = { info: 'primary', success: 'success', warning: 'warning', danger: 'danger' };
   const toast = document.createElement('div');
-  toast.className = `alert alert-${colors[type]} alert-dismissible fade show`;
-  toast.innerHTML = `${msg} <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+  toast.className = `alert alert-${colors[type] || 'primary'} alert-dismissible fade show`;
+  toast.textContent = msg;
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn-close';
+  close.setAttribute('data-bs-dismiss', 'alert');
+  toast.appendChild(close);
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 5000);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
+}
+
+async function readApiResponse(response) {
+  const text = await response.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch { throw new Error(response.ok ? 'استجابة الخادم غير صالحة' : `خطأ من الخادم (${response.status})`); }
+  if (!response.ok || data.error) throw new Error(data.error || `تعذر تنفيذ العملية (${response.status})`);
+  return data;
+}
+
+let currentRolePromise;
+function currentRole() {
+  if (!currentRolePromise) {
+    currentRolePromise = fetch('/api/auth/me')
+      .then(readApiResponse)
+      .then(data => data.user?.Role || document.body.dataset.role || null)
+      .catch(() => document.body.dataset.role || null);
+  }
+  return currentRolePromise;
 }
 
 // ============== DESIGNER PAGE ==============
 function loadOrders(page = 1, filter = currentFilter) {
   currentPage = page;
   currentFilter = filter;
-  let url = `/api/orders?page=${page}`;
+  let url = `/api/orders?page=${page}&limit=20`;
   if (filter !== 'all') url += `&status=${encodeURIComponent(filter)}`;
   const search = document.getElementById('orderSearchInput')?.value || '';
   if (search) url += `&search=${encodeURIComponent(search)}`;
   const sort = document.getElementById('sortSelect')?.value || 'newest';
   url += `&sort=${sort}`;
-  fetch(url).then(r => r.json()).then(data => {
+  fetch(url).then(readApiResponse).then(data => {
     const tbody = document.getElementById('ordersTableBody');
     if (!tbody) return;
     tbody.innerHTML = '';
     if (!data.orders || data.orders.length === 0) {
       tbody.innerHTML = '<tr><td colspan="9" class="text-center">لا توجد طلبات</td></tr>';
+      renderPagination('ordersPagination', data.page || 1, data.pages || 1);
       return;
     }
     data.orders.forEach(o => {
@@ -51,28 +83,27 @@ function loadOrders(page = 1, filter = currentFilter) {
       const sc = statusColors[o.Status] || 'secondary';
 
       let materialsHtml = o.Materials && o.Materials.length
-        ? o.Materials.map(m => `<span class="badge bg-secondary me-1">${m.Material_Name} ${m.Thickness || ''} (${m.Quantity})</span>`).join('')
-        : o.Material_Name ? `<span class="badge bg-secondary">${o.Material_Name} ${o.Thickness || ''}</span>` : '-';
+        ? o.Materials.map(m => `<span class="badge bg-secondary me-1">${escapeHtml(m.Material_Name)} ${escapeHtml(m.Thickness || '')} (${Number(m.Quantity) || 0} لوح)</span>`).join('')
+        : o.Material_Name ? `<span class="badge bg-secondary">${escapeHtml(o.Material_Name)} ${escapeHtml(o.Thickness || '')}</span>` : '-';
+      if (Number(o.Material_Qty) > 0) materialsHtml += `<div class="small mt-1">المطلوب: <strong>${Number(o.Material_Qty)} ${escapeHtml(o.Quantity_Unit || 'لوح')}</strong></div>`;
 
       const showUploadBtn = o.Status === 'قيد التصميم';
       const hasFile = o.File_Path;
-      const isDelivered = o.Status === 'تم التسليم';
-      const isCutDone = o.Status === 'تم الانتهاء من القص';
 
       tbody.innerHTML += `<tr>
         <td>${o.Task_ID}</td>
-        <td><a href="/client/${o.Client_ID}" class="text-decoration-none">${o.Client_Name || '---'}</a></td>
+        <td><a href="/client/${o.Client_ID}" class="text-decoration-none">${escapeHtml(o.Client_Name || '---')}</a></td>
         <td><span class="badge bg-${o.Machine_Type === 'Laser' ? 'danger' : 'success'}">${o.Machine_Type}</span></td>
         <td>${materialsHtml}</td>
-        <td><small class="text-muted">${(o.Notes || '').substring(0, 30)}</small></td>
+        <td><small class="text-muted">${escapeHtml((o.Notes || '').substring(0, 30))}</small></td>
         <td><span class="badge bg-${sc}">${o.Status}</span></td>
         <td>${showUploadBtn
-          ? `<button class="btn btn-sm btn-outline-primary" onclick="openUploadModal(${o.Task_ID})" title="الملفات والصور"><i class="bi bi-images"></i></button>${o.File_Count > 0 ? ` <span class="badge bg-success">${o.File_Count}</span>` : ''}`
+          ? `<button class="btn btn-sm btn-outline-primary" onclick="openUploadModal(${o.Task_ID}, ${Number(o.Material_Qty) || 0}, '${o.Quantity_Unit === 'قطعة' ? 'قطعة' : 'لوح'}')" title="الملفات والصور"><i class="bi bi-images"></i></button>${o.File_Count > 0 ? ` <span class="badge bg-success">${o.File_Count}</span>` : ''}`
           : hasFile ? `<span class="badge bg-success"><i class="bi bi-check"></i>${o.File_Count > 0 ? ` ${o.File_Count}` : ''}</span>` : '-'}</td>
         <td>
           <div class="d-flex align-items-center gap-1">
             ${hasFile
-              ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-outline-primary" title="تحميل كل الملفات (${o.File_Count || 1})"><i class="bi bi-download"></i></a>`
+              ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-outline-primary" title="تحميل أحدث ملف تصميم"><i class="bi bi-download"></i></a>`
               : `<span class="text-muted">-</span>`}
           </div>
         </td>
@@ -83,14 +114,14 @@ function loadOrders(page = 1, filter = currentFilter) {
             <button class="btn btn-outline-info" onclick="openRestoreFromOrder(${o.Task_ID})" title="استرجاع ملفات من طلب قديم"><i class="bi bi-arrow-counterclockwise"></i></button>
             <a href="/client/${o.Client_ID}" class="btn btn-outline-dark" title="عرض ملفات العميل"><i class="bi bi-folder"></i></a>
             ${hasFile ? `<button class="btn btn-outline-warning" onclick="deleteFile(${o.Task_ID})" title="حذف الملف"><i class="bi bi-file-x"></i></button>` : ''}
-            ${isDelivered ? `<button class="btn btn-outline-danger" onclick="createInvoiceFromOrder(${o.Task_ID})" title="إنشاء فاتورة"><i class="bi bi-receipt"></i></button>` : ''}
-            ${isDelivered ? `<a href="/api/orders/${o.Task_ID}/receipt/pdf" class="btn btn-outline-success btn-sm" title="فاتورة استلام"><i class="bi bi-file-earmark-pdf"></i></a>` : ''}
-            <button class="btn btn-outline-danger" onclick="deleteOrder(${o.Task_ID})" title="حذف الطلب"><i class="bi bi-trash"></i></button>
           </div>
         </td>
       </tr>`;
     });
     renderPagination('ordersPagination', data.page, data.pages);
+  }).catch(error => {
+    const tbody = document.getElementById('ordersTableBody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="9" class="text-center text-danger">${escapeHtml(error.message)}</td></tr>`;
   });
 }
 
@@ -177,20 +208,23 @@ function setupClientSearch() {
 }
 
 async function addClient() {
-  const name = document.getElementById('newClientName').value;
+  const name = document.getElementById('newClientName').value.trim();
   if (!name) { showToast('الاسم مطلوب', 'warning'); return; }
-  const data = await fetch('/api/clients', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Full_Name: name, Phone_Number: document.getElementById('newClientPhone').value, Notes: document.getElementById('newClientNotes').value })
-  }).then(r => r.json());
-  if (data.error) { showToast(data.error, 'danger'); return; }
-  document.getElementById('clientId').value = data.Client_ID;
-  document.getElementById('clientSearch').value = data.Full_Name;
-  document.getElementById('newClientModal').querySelector('.btn-close').click();
-  document.getElementById('newClientName').value = '';
-  document.getElementById('newClientPhone').value = '';
-  document.getElementById('newClientNotes').value = '';
-  showToast('تم إضافة العميل', 'success');
+  try {
+    const data = await fetch('/api/clients', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ Full_Name: name, Phone_Number: document.getElementById('newClientPhone').value, Notes: document.getElementById('newClientNotes').value })
+    }).then(readApiResponse);
+    const client = data.client || data;
+    if (!client.Client_ID) throw new Error('لم يُعِد الخادم رقم العميل');
+    document.getElementById('clientId').value = client.Client_ID;
+    document.getElementById('clientSearch').value = client.Full_Name || name;
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('newClientModal')).hide();
+    document.getElementById('newClientName').value = '';
+    document.getElementById('newClientPhone').value = '';
+    document.getElementById('newClientNotes').value = '';
+    showToast('تمت إضافة العميل', 'success');
+  } catch (error) { showToast(error.message, 'danger'); }
 }
 
 // ============== MATERIALS ==============
@@ -220,8 +254,12 @@ function addOrderMaterialRow() {
 }
 
 // ============== UPLOAD MODAL ==============
-function openUploadModal(taskId) {
+function openUploadModal(taskId, requestedQuantity = 0, requestedUnit = 'لوح') {
   document.getElementById('uploadTaskId').value = taskId;
+  const requested = document.getElementById('uploadRequestedQuantity');
+  if (requested) {
+    requested.textContent = Number(requestedQuantity) > 0 ? `الكمية المطلوبة: ${Number(requestedQuantity)} ${requestedUnit}` : 'لم تُحدد كمية مطلوبة لهذا الطلب';
+  }
   document.getElementById('uploadFile').value = '';
   document.getElementById('uploadImage').value = '';
   document.getElementById('uploadNotes').value = '';
@@ -229,13 +267,19 @@ function openUploadModal(taskId) {
   if (fileCountText) fileCountText.textContent = '';
   const labelsContainer = document.getElementById('fileLabelsContainer');
   if (labelsContainer) { labelsContainer.style.display = 'none'; labelsContainer.innerHTML = ''; }
+  const existingFiles = document.getElementById('existingFilesContainer');
+  const existingFilesWrap = document.getElementById('existingFilesWrap');
+  const existingImagesWrap = document.getElementById('existingImagesWrap');
+  if (existingFiles) { existingFiles.innerHTML = ''; existingFiles.style.display = 'none'; }
+  if (existingFilesWrap) existingFilesWrap.style.display = 'none';
+  if (existingImagesWrap) { existingImagesWrap.innerHTML = ''; existingImagesWrap.style.display = 'none'; }
   const container = document.getElementById('materialsContainer');
   container.innerHTML = `<div class="row mb-2 material-row">
     <div class="col-md-5">
       <select class="form-select mat-select"><option value="">-- اختر المادة --</option></select>
     </div>
     <div class="col-md-3">
-      <input type="number" class="form-control mat-qty" placeholder="الكمية" step="0.1" min="0">
+      <input type="number" class="form-control mat-qty" placeholder="عدد الألواح" step="0.1" min="0">
     </div>
     <div class="col-md-2">
       <span class="form-text mat-stock"></span>
@@ -246,22 +290,28 @@ function openUploadModal(taskId) {
   </div>`;
   loadMaterials(container.querySelector('.mat-select'));
   loadExistingFiles(taskId);
-  new bootstrap.Modal(document.getElementById('uploadModal')).show();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('uploadModal')).show();
 }
 
 function loadExistingFiles(taskId) {
-  fetch(`/api/files/list/${taskId}`).then(r => r.json()).then(files => {
-    if (!Array.isArray(files) || files.length === 0) return;
+  fetch(`/api/files/list/${taskId}`).then(readApiResponse).then(payload => {
+    if (document.getElementById('uploadTaskId')?.value !== String(taskId)) return;
+    const files = Array.isArray(payload) ? payload : (payload.files || []);
+    const container = document.getElementById('existingFilesContainer');
+    const fileWrap = document.getElementById('existingFilesWrap');
+    const imgWrap = document.getElementById('existingImagesWrap');
+    if (container) { container.innerHTML = ''; container.style.display = 'none'; }
+    if (imgWrap) { imgWrap.innerHTML = ''; imgWrap.style.display = 'none'; }
+    if (fileWrap) fileWrap.style.display = 'none';
+    if (!files.length) return;
     const designFiles = files.filter(f => f.File_Type !== 'image' && Number(f.Is_Current) !== 0);
     const imageFiles = files.filter(f => f.File_Type === 'image');
 
-    const container = document.getElementById('existingFilesContainer');
-    const fileWrap = document.getElementById('existingFilesWrap');
+    if (fileWrap && (designFiles.length || imageFiles.length)) fileWrap.style.display = 'block';
     if (container && designFiles.length > 0) {
-      if (fileWrap) fileWrap.style.display = 'block';
       container.innerHTML = designFiles.map(f => `
         <li class="list-group-item d-flex justify-content-between align-items-center py-1">
-          <small><i class="bi bi-file-earmark"></i> ${f.Label ? `<strong>${f.Label}</strong> - ` : ''}${f.Original_Name}</small>
+          <small><i class="bi bi-file-earmark"></i> ${f.Label ? `<strong>${escapeHtml(f.Label)}</strong> - ` : ''}${escapeHtml(f.Original_Name)}</small>
           <div>
             <a href="/api/files/download-file/${f.File_ID}" class="btn btn-xs btn-outline-primary py-0 me-1" title="تحميل"><i class="bi bi-download"></i></a>
             <button class="btn btn-xs btn-outline-danger py-0" onclick="deleteFileById(${f.File_ID})" title="حذف"><i class="bi bi-trash"></i></button>
@@ -271,17 +321,16 @@ function loadExistingFiles(taskId) {
       container.style.display = 'block';
     }
 
-    const imgWrap = document.getElementById('existingImagesWrap');
     if (imgWrap && imageFiles.length > 0) {
       imgWrap.style.display = 'flex';
       imgWrap.innerHTML = imageFiles.map(f => `
         <div class="position-relative" style="width:80px;height:80px">
-          <img src="/api/files/image/${f.File_ID}" class="img-thumbnail" style="width:80px;height:80px;object-fit:cover" alt="${f.Label || ''}">
+          <img src="/api/files/image/${f.File_ID}" class="img-thumbnail" style="width:80px;height:80px;object-fit:cover" alt="${escapeHtml(f.Label || '')}">
           <button class="btn btn-xs btn-danger position-absolute top-0 start-0 p-0" style="width:18px;height:18px;border-radius:50%" onclick="deleteFileById(${f.File_ID})">&times;</button>
         </div>
       `).join('');
     }
-  }).catch(() => {});
+  }).catch(error => showToast(`تعذر عرض ملفات الطلب: ${error.message}`, 'danger'));
 }
 
 function onUploadFileChange(input) {
@@ -293,7 +342,7 @@ function onUploadFileChange(input) {
     labelsContainer.style.display = 'block';
     labelsContainer.innerHTML = Array.from(input.files).map((f, i) => `
       <div class="input-group input-group-sm mb-1">
-        <span class="input-group-text" style="min-width:100px"><small>${f.name.substring(0, 25)}</small></span>
+        <span class="input-group-text" style="min-width:100px"><small>${escapeHtml(f.name.substring(0, 25))}</small></span>
         <input type="text" class="form-control file-label-input" placeholder="اسم/مواصفة الملف (مثال: غرفة نوم 1)" data-index="${i}">
       </div>
     `).join('');
@@ -306,12 +355,12 @@ function onUploadFileChange(input) {
 
 function deleteFileById(fileId) {
   if (!confirm('هل أنت متأكد من حذف هذا الملف؟')) return;
-  fetch(`/api/files/file/${fileId}`, { method: 'DELETE' }).then(r => r.json()).then(d => {
-    if (d.error) { showToast(d.error, 'danger'); return; }
+  fetch(`/api/files/file/${fileId}`, { method: 'DELETE' }).then(readApiResponse).then(() => {
     showToast('تم حذف الملف', 'success');
     const taskId = document.getElementById('uploadTaskId')?.value;
     if (taskId) loadExistingFiles(taskId);
-  });
+    loadOrders(currentPage, currentFilter);
+  }).catch(error => showToast(error.message, 'danger'));
 }
 
 function addMaterialRow() {
@@ -319,14 +368,36 @@ function addMaterialRow() {
   const row = document.createElement('div');
   row.className = 'row mb-2 material-row';
   row.innerHTML = `<div class="col-md-5"><select class="form-select mat-select"><option value="">-- اختر المادة --</option></select></div>
-    <div class="col-md-3"><input type="number" class="form-control mat-qty" placeholder="الكمية" step="0.1" min="0"></div>
+    <div class="col-md-3"><input type="number" class="form-control mat-qty" placeholder="عدد الألواح" step="0.1" min="0"></div>
     <div class="col-md-2"><span class="form-text mat-stock"></span></div>
     <div class="col-md-2"><button type="button" class="btn btn-sm btn-outline-danger" onclick="this.closest('.material-row').remove()"><i class="bi bi-x"></i></button></div>`;
   container.appendChild(row);
   loadMaterials(row.querySelector('.mat-select'));
 }
 
-function uploadDesignFile() {
+async function uploadOrderImages(taskId = document.getElementById('uploadTaskId')?.value, silent = false) {
+  const input = document.getElementById('uploadImage');
+  const images = Array.from(input?.files || []);
+  if (!images.length) {
+    if (!silent) showToast('اختر صورة واحدة على الأقل', 'warning');
+    return false;
+  }
+  const form = new FormData();
+  images.forEach(image => form.append('image', image));
+  try {
+    await fetch(`/api/files/upload-image/${taskId}`, { method: 'POST', body: form }).then(readApiResponse);
+    input.value = '';
+    loadExistingFiles(taskId);
+    if (!silent) showToast(`تم رفع ${images.length} صورة بنجاح`, 'success');
+    return true;
+  } catch (error) {
+    if (silent) throw error;
+    showToast(`تعذر رفع الصور: ${error.message}`, 'danger');
+    return false;
+  }
+}
+
+async function uploadDesignFile(button) {
   const taskId = document.getElementById('uploadTaskId').value;
   const fileInput = document.getElementById('uploadFile');
   const imageInput = document.getElementById('uploadImage');
@@ -347,7 +418,7 @@ function uploadDesignFile() {
   const labels = [];
   document.querySelectorAll('.file-label-input').forEach(inp => labels.push(inp.value.trim()));
 
-  const btn = event?.target || document.querySelector('#uploadModal .btn-primary');
+  const btn = button || document.querySelector('#uploadModal .btn-primary');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جاري الرفع...'; }
 
   const formData = new FormData();
@@ -356,49 +427,45 @@ function uploadDesignFile() {
   }
   formData.append('materials', JSON.stringify(materials));
   formData.append('labels', JSON.stringify(labels));
+  formData.append('notes', document.getElementById('uploadNotes')?.value || '');
 
   showToast(`جاري رفع ${files.length} ملف...`, 'info');
-  fetch(`/api/files/upload/${taskId}`, { method: 'POST', body: formData })
-    .then(r => r.json().then(data => ({status: r.status, data})))
-    .then(({status, data}) => {
-      if (data.error) { showToast(data.error, 'danger'); return; }
-      if (status !== 200) { showToast('خطأ في السيرفر: ' + (data.error || status), 'danger'); return; }
-      const count = data.count || files.length;
-      showToast(`✅ تم رفع ${count} ملف بنجاح`, 'success');
-
-      if (imageInput && imageInput.files && imageInput.files.length > 0) {
-        const imgFormData = new FormData();
-        for (let i = 0; i < imageInput.files.length; i++) {
-          imgFormData.append('image', imageInput.files[i]);
-        }
-        return fetch(`/api/files/upload-image/${taskId}`, { method: 'POST', body: imgFormData }).then(r => r.json());
+  try {
+    const data = await fetch(`/api/files/upload/${taskId}`, { method: 'POST', body: formData }).then(readApiResponse);
+    loadOrders(currentPage, currentFilter);
+    fileInput.value = '';
+    loadExistingFiles(taskId);
+    const hadImages = Boolean(imageInput?.files?.length);
+    if (hadImages) {
+      try { await uploadOrderImages(taskId, true); }
+      catch (error) {
+        showToast(`تم حفظ ملفات التصميم، لكن تعذر رفع الصور: ${error.message}. أعد رفع الصور من الزر المخصص داخل النافذة.`, 'warning');
+        return;
       }
-      return null;
-    })
-    .then(() => {
-      bootstrap.Modal.getInstance(document.getElementById('uploadModal')).hide();
-      loadOrders();
-    })
-    .catch(e => showToast('فشل رفع الملفات - تأكد من اتصال السيرفر: ' + e.message, 'danger'))
-    .finally(() => {
-      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد'; }
+    }
+    showToast(`تم رفع ${data.count || files.length} ملف${hadImages ? ' والصور' : ''} بنجاح`, 'success');
+    bootstrap.Modal.getInstance(document.getElementById('uploadModal'))?.hide();
+  } catch (error) {
+    showToast(`فشل رفع ملفات التصميم: ${error.message}`, 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد'; }
+    if (!fileInput.files.length) {
       fileInput.value = '';
-      if (imageInput) imageInput.value = '';
       const txt = document.getElementById('fileCountText');
       if (txt) txt.textContent = '';
       const lc = document.getElementById('fileLabelsContainer');
       if (lc) { lc.style.display = 'none'; lc.innerHTML = ''; }
-    });
+    }
+  }
 }
 
 function markDelivered(taskId) {
   if (!confirm('هل تريد تسليم هذا الطلب؟')) return;
   fetch(`/api/orders/${taskId}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Status: 'تم التسليم' }) })
-    .then(r => r.json()).then(data => {
-      if (data.error) { showToast(data.error, 'danger'); return; }
+    .then(readApiResponse).then(() => {
       showToast('تم تسليم الطلب بنجاح', 'success');
-      loadOrders();
-    });
+      refreshVisibleOrders();
+    }).catch(error => showToast(error.message, 'danger'));
 }
 
 // ============== DUPLICATE ORDER ==============
@@ -414,6 +481,7 @@ function duplicateOrder(taskId) {
 
 // ============== RESTORE FROM OLD ORDER ==============
 let restoreClientId = null;
+let restoreSourceOrders = new Map();
 
 function openRestoreModal() {
   document.getElementById('restoreTargetTaskId').value = '';
@@ -422,9 +490,10 @@ function openRestoreModal() {
   document.getElementById('restoreOrdersWrap').style.display = 'none';
   document.getElementById('restoreFilesWrap').style.display = 'none';
   document.getElementById('restoreFilesList').innerHTML = '';
+  restoreSourceOrders = new Map();
   const submitBtn = document.getElementById('restoreSubmitBtn');
   if (submitBtn) submitBtn.disabled = true;
-  new bootstrap.Modal(document.getElementById('restoreModal')).show();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('restoreModal')).show();
 }
 
 function openRestoreFromOrder(taskId) {
@@ -453,8 +522,9 @@ document.addEventListener('DOMContentLoaded', function() {
       const data = await fetch(`/api/orders?clientId=${restoreClientId}&limit=200`).then(r => r.json());
       const orderSelect = document.getElementById('restoreOrderSelect');
       const orders = (data.orders || []).filter(o => o.Status === 'تم التسليم' || o.Status === 'تم الانتهاء من القص');
+      restoreSourceOrders = new Map(orders.map(order => [String(order.Task_ID), order]));
       orderSelect.innerHTML = orders.map(o => `<option value="${o.Task_ID}">#${o.Task_ID} - ${o.Machine_Type} - ${o.Created_At || ''}</option>`).join('');
-      document.getElementById('restoreOrdersWrap').style.display = orders.length ? 'block' : 'block';
+      document.getElementById('restoreOrdersWrap').style.display = orders.length ? 'block' : 'none';
       if (orders.length) loadRestoreFiles();
       else document.getElementById('restoreFilesWrap').style.display = 'none';
     });
@@ -493,114 +563,198 @@ async function submitRestore() {
   if (!taskId) {
     const clientId = restoreClientId;
     const sourceTaskId = document.getElementById('restoreOrderSelect').value;
+    const sourceOrder = restoreSourceOrders.get(String(sourceTaskId));
     const machineType = confirm('استرجاع لطلبات الليزر؟\n\nاضغط OK لليزر (Laser)\nاضغط إلغاء للراوتر (Router)') ? 'Laser' : 'Router';
     showToast('جاري إنشاء طلب جديد ثم استرجاع الملفات...', 'info');
+    let createdTaskId = null;
     try {
       const res = await fetch('/api/orders', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ Client_ID: clientId, Machine_Type: machineType, Notes: `استرجاع من طلب #${sourceTaskId}` })
+        body: JSON.stringify({
+          Client_ID: clientId,
+          Machine_Type: machineType,
+          Material_ID: sourceOrder?.Material_ID || null,
+          Material_Qty: Number(sourceOrder?.Material_Qty || 0),
+          Quantity_Unit: sourceOrder?.Quantity_Unit || 'لوح',
+          Materials: Array.isArray(sourceOrder?.Materials) ? sourceOrder.Materials.map(material => ({ Material_ID: material.Material_ID, Quantity: material.Quantity })) : [],
+          Notes: `استرجاع من طلب #${sourceTaskId}`
+        })
       });
-      const order = await res.json();
-      if (order.error) { showToast(order.error, 'danger'); return; }
+      const order = await readApiResponse(res);
+      createdTaskId = order.Task_ID;
       const copyRes = await fetch(`/api/files/copy/${order.Task_ID}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileIds })
       });
-      const copyData = await copyRes.json();
-      if (copyData.error) { showToast(copyData.error, 'danger'); return; }
+      const copyData = await readApiResponse(copyRes);
       showToast(`✅ تم إنشاء طلب جديد #${order.Task_ID} واسترجاع ${copyData.count} ملف`, 'success');
-    } catch(e) { showToast('فشل الاسترجاع: ' + e.message, 'danger'); }
-    bootstrap.Modal.getInstance(document.getElementById('restoreModal')).hide();
-    loadOrders();
+      bootstrap.Modal.getInstance(document.getElementById('restoreModal'))?.hide();
+      loadOrders();
+    } catch(e) {
+      if (createdTaskId) {
+        document.getElementById('restoreTargetTaskId').value = createdTaskId;
+        showToast(`أُنشئ الطلب #${createdTaskId} لكن تعذر نسخ الملفات: ${e.message}. أعد الضغط على الاسترجاع لإكماله دون إنشاء طلب جديد.`, 'warning');
+        loadOrders();
+      } else showToast('فشل إنشاء الطلب: ' + e.message, 'danger');
+    }
     return;
   }
 
-  const res = await fetch(`/api/files/copy/${taskId}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fileIds })
-  });
-  const data = await res.json();
-  if (data.error) { showToast(data.error, 'danger'); return; }
-  showToast(`✅ تم استرجاع ${data.count} ملف إلى الطلب الحالي`, 'success');
-  bootstrap.Modal.getInstance(document.getElementById('restoreModal')).hide();
-  loadOrders();
+  try {
+    const res = await fetch(`/api/files/copy/${taskId}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileIds })
+    });
+    const data = await readApiResponse(res);
+    showToast(`✅ تم استرجاع ${data.count} ملف إلى الطلب الحالي`, 'success');
+    bootstrap.Modal.getInstance(document.getElementById('restoreModal'))?.hide();
+    loadOrders();
+  } catch (error) { showToast(`تعذر استرجاع الملفات: ${error.message}`, 'danger'); }
 }
 
 // ============== LASER ==============
+function machineOrderDetails(order) {
+  const materials = Array.isArray(order.Materials) ? order.Materials.filter(material => Number(material.Quantity) > 0) : [];
+  const fallbackMaterial = order.Material_Name ? escapeHtml(order.Material_Name) : '-';
+  const fallbackThickness = order.Thickness ? escapeHtml(order.Thickness) : '-';
+  const materialNames = materials.length
+    ? materials.map(material => `<div>${escapeHtml(material.Material_Name || '-')}</div>`).join('')
+    : fallbackMaterial;
+  const thicknesses = materials.length
+    ? materials.map(material => `<div>${escapeHtml(material.Thickness || '-')}</div>`).join('')
+    : fallbackThickness;
+  const requested = Number(order.Material_Qty) > 0
+    ? `<div>المطلوب: <strong>${Number(order.Material_Qty)}</strong> ${escapeHtml(order.Quantity_Unit || 'لوح')}</div>`
+    : '';
+  const cutting = materials.length
+    ? materials.map(material => `<div>للقص: <strong>${Number(material.Quantity)}</strong> لوح ${escapeHtml(material.Material_Name || '')}</div>`).join('')
+    : '';
+  return { materialNames, thicknesses, quantity: requested + cutting || '<span class="text-muted">لم تُحدد كمية</span>' };
+}
+
+function refreshVisibleOrders() {
+  if (document.getElementById('ordersTableBody')) loadOrders(currentPage, currentFilter);
+  if (document.getElementById('laserOrdersBody')) loadLaserOrders();
+  if (document.getElementById('routerOrdersBody')) loadRouterOrders();
+}
+
+async function openMachineFiles(taskId) {
+  const modal = document.getElementById('machineFilesModal');
+  const content = document.getElementById('machineFilesContent');
+  if (!modal || !content) return;
+  content.textContent = 'جارٍ تحميل ملفات الطلب...';
+  bootstrap.Modal.getOrCreateInstance(modal).show();
+  try {
+    const payload = await fetch(`/api/files/list/${taskId}`).then(readApiResponse);
+    const files = Array.isArray(payload) ? payload : (payload.files || []);
+    const designs = files.filter(file => file.File_Type !== 'image' && (file.Is_Current == null || Number(file.Is_Current) !== 0));
+    const images = files.filter(file => file.File_Type === 'image');
+    content.innerHTML = `
+      <h6>ملفات التصميم الحالية</h6>
+      ${designs.length ? `<div class="list-group mb-3">${designs.map(file => `
+        <a class="list-group-item list-group-item-action d-flex justify-content-between gap-2" href="/api/files/download-file/${file.File_ID}">
+          <span>${escapeHtml(file.Label || file.Original_Name)}</span><span><i class="bi bi-download"></i> تحميل</span>
+        </a>`).join('')}</div>` : '<p class="text-muted">لا توجد ملفات تصميم حالية.</p>'}
+      <h6>صور الطلب</h6>
+      ${images.length ? `<div class="d-flex flex-wrap gap-3">${images.map(file => `
+        <a href="/api/files/download-file/${file.File_ID}" title="تحميل ${escapeHtml(file.Original_Name)}" class="text-decoration-none text-center" style="max-width:120px">
+          <img src="/api/files/image/${file.File_ID}" alt="${escapeHtml(file.Original_Name)}" loading="lazy" class="img-thumbnail" style="width:110px;height:90px;object-fit:cover">
+          <span class="d-block small text-truncate">${escapeHtml(file.Original_Name)}</span>
+        </a>`).join('')}</div>` : '<p class="text-muted">لا توجد صور لهذا الطلب.</p>'}`;
+  } catch (error) {
+    content.innerHTML = `<div class="alert alert-danger">${escapeHtml(error.message)}</div>`;
+  }
+}
+
 async function loadLaserOrders() {
-  const data = await fetch("/api/orders?status=جاهز للقص&machine=Laser").then(r => r.json());
   const tbody = document.getElementById('laserOrdersBody');
   if (!tbody) return;
-  tbody.innerHTML = '';
-  if (!data.orders || data.orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">لا توجد طلبات جاهزة حالياً</td></tr>';
-    return;
+  try {
+    const data = await fetch('/api/orders?status=جاهز للقص&machine=Laser&limit=200').then(readApiResponse);
+    if (!data.orders?.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">لا توجد طلبات جاهزة حالياً</td></tr>';
+    } else {
+      tbody.innerHTML = data.orders.map(order => {
+        const details = machineOrderDetails(order);
+        return `<tr>
+          <td>${order.Task_ID}</td><td>${escapeHtml(order.Client_Name || '---')}</td>
+          <td>${details.materialNames}</td><td>${details.thicknesses}</td>
+          <td>${details.quantity}</td>
+          <td>${escapeHtml(order.Notes || '-')}</td>
+          <td><div class="d-flex gap-1 flex-wrap">${order.File_Path ? `<a href="/api/files/download/${order.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> أحدث ملف</a>` : ''}<button type="button" class="btn btn-sm btn-outline-primary" onclick="openMachineFiles(${order.Task_ID})"><i class="bi bi-images"></i> الصور والملفات</button></div></td>
+          <td><button class="btn btn-sm btn-success" onclick="completeOrder(${order.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
+        </tr>`;
+      }).join('');
+    }
+    await loadCutDoneForMachine('Laser', 'recentLaserOrders');
+  } catch (error) {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${escapeHtml(error.message)}</td></tr>`;
   }
-  data.orders.forEach(o => {
-    tbody.innerHTML += `<tr>
-      <td>${o.Task_ID}</td><td>${o.Client_Name || '---'}</td>
-      <td>${o.Material_Name || '-'}</td><td>${o.Thickness || '-'}</td>
-      <td><strong>${o.Material_Qty || 0}</strong> ${o.Quantity_Unit || 'لوح'}</td>
-      <td>${o.Notes || '-'}</td>
-      <td>${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> تحميل</a>` : '-'}</td>
-      <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
-    </tr>`;
-  });
-  await loadCutDoneForMachine('Laser', 'recentLaserOrders');
 }
 
 async function loadCutDoneForMachine(machine, targetId) {
-  const cutDone = await fetch(`/api/orders?status=تم الانتهاء من القص&machine=${machine}&page=1`).then(r => r.json());
   const doneBody = document.getElementById(targetId);
-  if (doneBody && cutDone.orders) {
-    doneBody.innerHTML = cutDone.orders.slice(0, 10).map(o =>
+  if (!doneBody) return;
+  try {
+    const [cutDone, packed] = await Promise.all([
+      fetch(`/api/orders?status=${encodeURIComponent('تم الانتهاء من القص')}&machine=${machine}&page=1&limit=10`).then(readApiResponse),
+      fetch(`/api/orders?status=${encodeURIComponent('تم التغليف')}&machine=${machine}&page=1&limit=10`).then(readApiResponse)
+    ]);
+    const completed = [...(cutDone.orders || []), ...(packed.orders || [])]
+      .sort((left, right) => String(right.Created_At || '').localeCompare(String(left.Created_At || '')))
+      .slice(0, 10);
+    doneBody.innerHTML = completed.map(o =>
       `<tr>
-        <td>${o.Task_ID}</td><td>${o.Client_Name || ''}</td>
-        <td><span class="badge bg-dark">${o.Status}</span></td>
-        <td>${o.Created_At || ''}</td>
+        <td>${o.Task_ID}</td><td>${escapeHtml(o.Client_Name || '')}</td>
+        <td><span class="badge bg-dark">${escapeHtml(o.Status)}</span></td>
+        <td>${escapeHtml(o.Created_At || '')}</td>
         <td><button class="btn btn-sm btn-success" onclick="markDelivered(${o.Task_ID})"><i class="bi bi-check-circle"></i> تم التسليم</button></td>
       </tr>`
     ).join('') || '<tr><td colspan="5" class="text-center text-muted">لا توجد طلبات منتهية القص</td></tr>';
+  } catch (error) {
+    doneBody.innerHTML = `<tr><td colspan="5" class="text-center text-danger">${escapeHtml(error.message)}</td></tr>`;
   }
 }
 
 async function loadRouterOrders() {
-  const data = await fetch("/api/orders?status=جاهز للقص&machine=Router").then(r => r.json());
   const tbody = document.getElementById('routerOrdersBody');
   if (!tbody) return;
-  tbody.innerHTML = '';
-  if (!data.orders || data.orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">لا توجد طلبات جاهزة حالياً</td></tr>';
-    return;
+  try {
+    const data = await fetch('/api/orders?status=جاهز للقص&machine=Router&limit=200').then(readApiResponse);
+    if (!data.orders?.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">لا توجد طلبات جاهزة حالياً</td></tr>';
+    } else {
+      tbody.innerHTML = data.orders.map(order => {
+        const details = machineOrderDetails(order);
+        return `<tr>
+          <td>${order.Task_ID}</td><td>${escapeHtml(order.Client_Name || '---')}</td>
+          <td>${details.materialNames}</td><td>${details.thicknesses}</td>
+          <td>${details.quantity}</td>
+          <td>${escapeHtml(order.Notes || '-')}</td>
+          <td><div class="d-flex gap-1 flex-wrap">${order.File_Path ? `<a href="/api/files/download/${order.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> أحدث ملف</a>` : ''}<button type="button" class="btn btn-sm btn-outline-primary" onclick="openMachineFiles(${order.Task_ID})"><i class="bi bi-images"></i> الصور والملفات</button></div></td>
+          <td><button class="btn btn-sm btn-success" onclick="completeOrder(${order.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
+        </tr>`;
+      }).join('');
+    }
+    await loadCutDoneForMachine('Router', 'recentRouterOrders');
+  } catch (error) {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${escapeHtml(error.message)}</td></tr>`;
   }
-  data.orders.forEach(o => {
-    tbody.innerHTML += `<tr>
-      <td>${o.Task_ID}</td><td>${o.Client_Name || '---'}</td>
-      <td>${o.Material_Name || '-'}</td><td>${o.Thickness || '-'}</td>
-      <td><strong>${o.Material_Qty || 0}</strong> ${o.Quantity_Unit || 'لوح'}</td>
-      <td>${o.Notes || '-'}</td>
-      <td>${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-sm btn-primary"><i class="bi bi-download"></i> تحميل</a>` : '-'}</td>
-      <td><button class="btn btn-sm btn-success" onclick="completeOrder(${o.Task_ID})"><i class="bi bi-check-lg"></i> تم الانتهاء من القص</button></td>
-    </tr>`;
-  });
-  await loadCutDoneForMachine('Router', 'recentRouterOrders');
 }
 
 function completeOrder(taskId) {
   if (!confirm('هل تم الانتهاء من قص هذا الطلب على الماكينة؟')) return;
   fetch(`/api/orders/${taskId}/status`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Status: 'تم الانتهاء من القص' }) })
-    .then(r => r.json()).then(data => {
-      if (data.error) { showToast(data.error, 'danger'); return; }
+    .then(readApiResponse).then(() => {
       showToast('✅ تم الانتهاء من القص', 'success');
-      loadLaserOrders();
-      loadRouterOrders();
-    });
+      refreshVisibleOrders();
+    }).catch(error => showToast(error.message, 'danger'));
 }
 
 function openUpdateModal(taskId, currentStatus) {
   document.getElementById('updateTaskId').value = taskId;
   document.getElementById('updateStatus').value = currentStatus;
-  new bootstrap.Modal(document.getElementById('updateStatusModal')).show();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('updateStatusModal')).show();
 }
 
 function updateOrderStatus() {
@@ -676,7 +830,10 @@ async function loadStats() {
 async function loadClients(page = 1) {
   try {
     const search = document.getElementById('searchClient')?.value || '';
-    const res = await fetch(`/api/clients?page=${page}&search=${encodeURIComponent(search)}`);
+    const [res, role] = await Promise.all([
+      fetch(`/api/clients?page=${page}&search=${encodeURIComponent(search)}`),
+      currentRole()
+    ]);
     if (!res.ok) { showToast('فشل تحميل العملاء', 'danger'); return; }
     const data = await res.json();
     const tbody = document.getElementById('clientsTableBody');
@@ -690,12 +847,12 @@ async function loadClients(page = 1) {
     data.clients.forEach(c => {
       const stars = '★'.repeat(c.Rating || 3) + '☆'.repeat(5 - (c.Rating || 3));
       tbody.innerHTML += `<tr>
-        <td>${c.Client_ID}</td><td>${c.Full_Name}</td><td>${c.Phone_Number || '-'}</td>
-        <td class="text-warning">${stars}</td><td>${c.Total_Spent || 0}</td><td>${c.Notes || '-'}</td>
+        <td>${c.Client_ID}</td><td>${escapeHtml(c.Full_Name)}</td><td>${escapeHtml(c.Phone_Number || '-')}</td>
+        <td class="text-warning">${stars}</td><td>${c.Total_Spent || 0}</td><td>${escapeHtml(c.Notes || '-')}</td>
         <td><a href="/client/${c.Client_ID}" class="btn btn-sm btn-outline-info"><i class="bi bi-folder"></i> عرض</a></td>
         <td>
           <button class="btn btn-sm btn-outline-primary" onclick="editClient(${c.Client_ID})" title="تعديل"><i class="bi bi-pencil"></i></button>
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteClient(${c.Client_ID})" title="حذف"><i class="bi bi-trash"></i></button>
+          ${role === 'Admin' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteClient(${c.Client_ID})" title="حذف"><i class="bi bi-trash"></i></button>` : ''}
         </td>
       </tr>`;
     });
@@ -728,7 +885,7 @@ async function editClient(id) {
     document.getElementById('clientPhone').value = data.Phone_Number || '';
     document.getElementById('clientRating').value = data.Rating || 3;
     document.getElementById('clientNotes').value = data.Notes || '';
-    new bootstrap.Modal(document.getElementById('clientModal')).show();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('clientModal')).show();
   } catch (e) {
     showToast('فشل تحميل بيانات العميل: ' + e.message, 'danger');
   }
@@ -759,7 +916,7 @@ async function loadClientDetail(clientId) {
   document.getElementById('clientFullName').textContent = client.Full_Name;
   document.getElementById('clientPhone').textContent = client.Phone_Number || 'لا يوجد';
   document.getElementById('clientRating').textContent = '★'.repeat(client.Rating || 3) + '☆'.repeat(5 - (client.Rating || 3));
-  document.getElementById('clientTotalSpent').textContent = `${client.Total_Spent || 0} رس`;
+  document.getElementById('clientTotalSpent').textContent = `${client.Total_Spent || 0} USD`;
   document.getElementById('clientNotes').textContent = client.Notes || '---';
   document.getElementById('clientDate').textContent = client.Created_At || '---';
 
@@ -783,9 +940,9 @@ async function loadClientDetail(clientId) {
       <div class="row align-items-center">
         <div class="col-md-1"><strong>#${o.Task_ID}</strong></div>
         <div class="col-md-2"><span class="badge bg-${o.Machine_Type === 'Laser' ? 'danger' : 'success'}">${o.Machine_Type}</span></div>
-        <div class="col-md-3"><small>${o.Materials_List || '-'}</small></div>
+        <div class="col-md-3"><small>${escapeHtml(o.Materials_List || '-')}</small></div>
         <div class="col-md-2"><span class="badge bg-${sc}">${o.Status}</span></div>
-        <div class="col-md-2"><small class="text-muted">${o.Created_At || ''}</small></div>
+        <div class="col-md-2"><small class="text-muted">${escapeHtml(o.Created_At || '')}</small></div>
         <div class="col-md-2">
           <div class="btn-group btn-group-sm">
             ${o.File_Path ? `<a href="/api/files/download/${o.Task_ID}" class="btn btn-outline-primary" title="تحميل"><i class="bi bi-download"></i></a>` : ''}
@@ -794,7 +951,7 @@ async function loadClientDetail(clientId) {
           </div>
         </div>
       </div>
-      ${o.Notes ? `<div class="row mt-1"><div class="col-12"><small class="text-muted"><i class="bi bi-chat-dots"></i> ${o.Notes}</small></div></div>` : ''}
+      ${o.Notes ? `<div class="row mt-1"><div class="col-12"><small class="text-muted"><i class="bi bi-chat-dots"></i> ${escapeHtml(o.Notes)}</small></div></div>` : ''}
     </div>`;
     container.appendChild(card);
   });
@@ -802,7 +959,10 @@ async function loadClientDetail(clientId) {
 
 // ============== INVENTORY ==============
 async function loadInventory() {
-  const payload = await fetch('/api/inventory').then(r => r.json());
+  const [payload, role] = await Promise.all([
+    fetch('/api/inventory').then(readApiResponse),
+    currentRole()
+  ]);
   const data = Array.isArray(payload) ? payload : (payload.inventory || []);
   const tbody = document.getElementById('inventoryTableBody');
   if (!tbody) return;
@@ -810,8 +970,8 @@ async function loadInventory() {
   if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center">لا توجد مواد</td></tr>'; return; }
   data.forEach(m => {
     const low = m.Quantity < 5 ? 'bg-danger text-white' : '';
-    tbody.innerHTML += `<tr class="${low}"><td>${m.Material_ID}</td><td>${m.Material_Name}</td><td>${m.Thickness || '-'}</td><td>${m.Quantity}</td><td>${m.Cost_Per_Unit || 0}</td>
-      <td><button class="btn btn-sm btn-outline-primary" onclick="editMaterial(${m.Material_ID})"><i class="bi bi-pencil"></i></button></td></tr>`;
+    tbody.innerHTML += `<tr class="${low}"><td>${m.Material_ID}</td><td>${escapeHtml(m.Material_Name)}</td><td>${escapeHtml(m.Thickness || '-')}</td><td>${m.Quantity}</td><td>${m.Cost_Per_Unit || 0}</td>
+      <td>${role === 'Admin' ? `<button class="btn btn-sm btn-outline-primary" onclick="editMaterial(${m.Material_ID})"><i class="bi bi-pencil"></i></button>` : '-'}</td></tr>`;
   });
 }
 
@@ -828,7 +988,7 @@ async function editMaterial(id) {
     document.getElementById('materialThickness').value = material.Thickness || '';
     document.getElementById('materialQty').value = material.Quantity ?? 0;
     document.getElementById('materialCost').value = material.Cost_Per_Unit ?? 0;
-    new bootstrap.Modal(document.getElementById('inventoryModal')).show();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('inventoryModal')).show();
   } catch (e) {
     showToast('فشل تحميل بيانات المادة: ' + e.message, 'danger');
   }
@@ -881,8 +1041,8 @@ async function loadUsers() {
     }
     return `<tr>
       <td>${u.User_ID}</td>
-      <td>${u.Name}</td>
-      <td>${u.Username}</td>
+      <td>${escapeHtml(u.Name)}</td>
+      <td>${escapeHtml(u.Username)}</td>
       <td><span class="badge bg-dark">${roles[u.Role] || u.Role}</span></td>
       <td>${permsHtml}</td>
       <td>${u.Created_At || ''}</td>
@@ -945,15 +1105,15 @@ async function loadInvoices(page = 1) {
     const sc = statusColors[inv.Status] || 'secondary';
     tbody.innerHTML += `<tr>
       <td>${inv.Invoice_ID}</td>
-      <td><a href="/api/invoices/${inv.Invoice_ID}/view" target="_blank" class="text-decoration-none">${inv.Invoice_Number}</a></td>
-      <td>${inv.Client_Name || '-'}</td>
-      <td>${inv.Machine_Type || '-'}</td>
-      <td>${parseFloat(inv.Amount).toFixed(2)} SYP</td>
+      <td><a href="/api/invoices/${inv.Invoice_ID}/view" target="_blank" rel="noopener" class="text-decoration-none">${escapeHtml(inv.Invoice_Number)}</a></td>
+      <td>${escapeHtml(inv.Client_Name || '-')}</td>
+      <td>${escapeHtml(inv.Machine_Type || '-')}</td>
+      <td>${parseFloat(inv.Amount).toFixed(2)} USD</td>
       <td><span class="badge bg-${sc}">${inv.Status}</span></td>
-      <td>${inv.Created_At || ''}</td>
+      <td>${escapeHtml(inv.Created_At || '')}</td>
       <td>
         <a href="/api/invoices/${inv.Invoice_ID}/view" target="_blank" class="btn btn-sm btn-outline-info" title="عرض"><i class="bi bi-eye"></i></a>
-        <a href="/api/invoices/${inv.Invoice_ID}/pdf" class="btn btn-sm btn-outline-primary" title="تحميل PDF"><i class="bi bi-download"></i></a>
+        <a href="/api/invoices/${inv.Invoice_ID}/view" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary" title="عرض صفحة الطباعة"><i class="bi bi-printer"></i></a>
       </td>
     </tr>`;
   });

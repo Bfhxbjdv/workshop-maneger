@@ -62,6 +62,7 @@
                 <div id="imagesGrid" class="row g-2 mt-2" style="max-height:400px; overflow:auto;">
                   <div class="col-12 text-center text-muted py-4">جاري تحميل الصور...</div>
                 </div>
+                <button type="button" id="loadMoreImagesButton" class="btn btn-outline-secondary btn-sm mt-2 d-none">عرض المزيد من الصور</button>
                 <input type="hidden" id="selectedImages" name="Image_IDs">
                 <div id="selectedCount" class="mt-2 text-primary fw-bold"></div>
               </div>
@@ -81,15 +82,15 @@
                 </div>
                 <div class="row g-2 mt-2" id="priceInputs" style="display:none;">
                   <div class="col-md-4">
-                    <label class="form-label fw-bold">السعر الأساسي (للوح)</label>
+                    <label id="basePriceLabel" class="form-label fw-bold">السعر الأساسي (للوح)</label>
                     <input type="number" id="basePrice" class="form-control" readonly>
                   </div>
                   <div class="col-md-4">
-                    <label class="form-label fw-bold">عمولتك (للوح)</label>
+                    <label id="commissionLabel" class="form-label fw-bold">عمولتك (للوح)</label>
                     <input type="number" id="agentCommission" class="form-control" placeholder="مثال: 50" step="0.01" min="0" required>
                   </div>
                   <div class="col-md-4">
-                    <label class="form-label fw-bold">السعر النهائي للعميل (للوح)</label>
+                    <label id="finalPriceLabel" class="form-label fw-bold">السعر النهائي للعميل (للوح)</label>
                     <input type="number" id="finalPrice" class="form-control" readonly>
                   </div>
                 </div>
@@ -189,6 +190,9 @@
         </div>
         <button type="submit" class="btn btn-warning w-100"><i class="bi bi-send"></i> إرسال طلب التصميم المخصص</button>
       </form>
+      <hr>
+      <h6>طلبات التصميم الأخيرة</h6>
+      <div id="myCustomDesigns" class="list-group list-group-flush small" aria-live="polite">جارٍ تحميل الطلبات...</div>
     </div>
   </div>
 </div>
@@ -223,25 +227,40 @@
     let selectedPricingId = null;
     let selectedMaterialId = null;
     let clientsLoaded = false;
+    let nextImageOffset = 0;
 
     // Load images
-    async function loadImages() {
+    async function loadImages(append = false) {
+      const button = document.getElementById('loadMoreImagesButton');
+      button.disabled = true;
       try {
-        const res = await fetch('/api/orders/agent/images', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        const limit = 200;
+        const res = await fetch(`/api/orders/agent/images?limit=${limit}&offset=${append ? nextImageOffset : 0}`, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!res.ok) throw new Error(`تعذر تحميل الصور (${res.status})`);
         const data = await res.json();
-        allImages = data.images || [];
+        const images = Array.isArray(data.images) ? data.images : [];
+        allImages = append ? allImages.concat(images) : images;
+        nextImageOffset = append ? nextImageOffset + images.length : images.length;
+        button.classList.toggle('d-none', images.length < limit);
         renderImages();
-      } catch (e) { console.error('loadImages:', e); }
+      } catch (e) {
+        console.error('loadImages:', e);
+        if (!append) document.getElementById('imagesGrid').innerHTML = '<div class="col-12 text-center text-danger py-4">تعذر تحميل الصور. حدّث الصفحة وحاول مجددًا.</div>';
+      } finally { button.disabled = false; }
     }
 
     // Load pricing from admin
     async function loadPricing() {
       try {
         const res = await fetch('/api/orders/agent/pricing', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!res.ok) throw new Error(`تعذر تحميل قائمة الأسعار (${res.status})`);
         const data = await res.json();
         allPricing = data.pricing || [];
         renderPricing();
-      } catch (e) { console.error('loadPricing:', e); }
+      } catch (e) {
+        console.error('loadPricing:', e);
+        document.getElementById('pricingSelector').innerHTML = '<div class="col-12 text-center text-danger py-4">تعذر تحميل قائمة الأسعار. حدّث الصفحة وحاول مجددًا.</div>';
+      }
     }
 
     function escapeImageText(value) {
@@ -256,11 +275,11 @@
       }
       grid.innerHTML = '';
       allImages.forEach(img => {
-        const isSelected = selectedImageIds.includes(img.Image_ID);
+        const isSelected = selectedImageIds.includes(Number(img.Image_ID));
         const col = document.createElement('div');
         col.className = 'col-6 col-md-4 col-lg-3';
         col.innerHTML = `
-          <div class="card h-100 image-card ${isSelected ? 'selected' : ''}" onclick="toggleImage(${img.Image_ID}, this)">
+          <div class="card h-100 image-card ${isSelected ? 'selected' : ''}" onclick="toggleImage(${Number(img.Image_ID)}, this)">
             <img src="/api/orders/agent/images/${img.Image_ID}/file" alt="${escapeImageText(img.Original_Name)}" class="card-img-top" loading="lazy" decoding="async" onerror="this.classList.add('d-none'); this.nextElementSibling.classList.remove('d-none')">
             <div class="d-none d-flex align-items-center justify-content-center bg-light text-muted" style="height:180px;">
               الصورة غير متاحة — يرجى إعادة رفعها
@@ -286,18 +305,18 @@
       }
       container.innerHTML = '';
       allPricing.forEach(p => {
-        const isSelected = selectedPricingId === p.Pricing_ID;
+        const isSelected = selectedPricingId === Number(p.Pricing_ID);
         const col = document.createElement('div');
         col.className = 'col-12 col-md-6 col-lg-4';
         col.innerHTML = `
-          <div class="card h-100 pricing-card ${isSelected ? 'selected' : ''}" onclick="selectPricing(${p.Pricing_ID}, ${p.Base_Price}, this)">
+          <div class="card h-100 pricing-card ${isSelected ? 'selected' : ''}" onclick="selectPricing(${Number(p.Pricing_ID)}, ${Number(p.Base_Price)}, this)">
             <div class="card-body p-3">
-              <div class="fw-bold">${p.Product_Name}</div>
-              <small class="text-muted">${p.Category} · ${p.Unit}</small>
-              ${p.Description ? `<div class="small text-muted mt-1">${p.Description}</div>` : ''}
+              <div class="fw-bold">${escapeImageText(p.Product_Name)}</div>
+              <small class="text-muted">${escapeImageText(p.Category)} · ${escapeImageText(p.Unit)}</small>
+              ${p.Description ? `<div class="small text-muted mt-1">${escapeImageText(p.Description)}</div>` : ''}
               <hr class="my-2">
               <div class="d-flex justify-content-between align-items-center">
-                <span class="fw-bold text-primary">$${p.Base_Price.toLocaleString()} USD/${p.Unit}</span>
+                <span class="fw-bold text-primary">$${Number(p.Base_Price).toLocaleString()} USD إجمالي الطلب</span>
                 ${isSelected ? '<i class="bi bi-check-circle-fill text-primary fs-5"></i>' : ''}
               </div>
             </div>
@@ -344,7 +363,7 @@
         const selected = Number(material.Material_ID) === Number(selectedMaterialId);
         col.innerHTML = `<button type="button" class="btn w-100 text-start ${selected ? 'btn-primary' : 'btn-outline-secondary'}">
           <strong>${escapeImageText(material.Material_Name)}</strong> ${material.Thickness ? `(${escapeImageText(material.Thickness)})` : ''}
-          <span class="d-block small">$${Number(material.Price).toLocaleString()} USD/${escapeImageText(allPricing.find(p => Number(p.Pricing_ID) === Number(selectedPricingId)).Unit)}</span>
+          <span class="d-block small">$${Number(material.Price).toLocaleString()} USD إجمالي الطلب</span>
         </button>`;
         col.querySelector('button').addEventListener('click', () => selectMaterial(material));
         container.appendChild(col);
@@ -354,7 +373,7 @@
     function selectMaterial(material) {
       selectedMaterialId = Number(material.Material_ID);
       document.getElementById('selectedMaterialId').value = selectedMaterialId;
-      document.getElementById('basePrice').value = Number(material.Price).toLocaleString();
+      document.getElementById('basePrice').value = Number(material.Price);
       renderMaterials();
       calculateTotal();
       updateSubmitButton();
@@ -365,14 +384,18 @@
       selectedMaterialId = null;
       document.getElementById('selectedPricingId').value = id;
       document.getElementById('selectedMaterialId').value = '';
-      document.getElementById('basePrice').value = basePrice.toLocaleString();
+      document.getElementById('basePrice').value = Number(basePrice);
       document.getElementById('priceInputs').style.display = 'flex';
       document.getElementById('agentCommission').value = '';
       document.getElementById('finalPrice').value = '';
       document.querySelectorAll('.pricing-card').forEach(c => c.classList.remove('selected'));
       card.classList.add('selected');
       const product = allPricing.find(p => Number(p.Pricing_ID) === Number(id));
-      document.getElementById('quantityHelp').textContent = `أدخل الكمية لكل صورة بوحدة: ${product.Unit}.`;
+      if (['لوح', 'قطعة'].includes(product.Unit)) {
+        document.getElementById('quantityUnit').value = product.Unit;
+        document.getElementById('quantityUnit').dispatchEvent(new Event('change'));
+      }
+      document.getElementById('quantityHelp').textContent = `أدخل الكمية لكل صورة بوحدة: ${document.getElementById('quantityUnit').value}.`;
       updateQuantitiesUI();
       renderMaterials();
       calculateTotal();
@@ -380,10 +403,10 @@
     }
 
     function calculateTotal() {
-      const basePrice = parseFloat(document.getElementById('basePrice').value.replace(/,/g, '')) || 0;
+      const basePrice = Number(document.getElementById('basePrice').value) || 0;
       const commission = parseFloat(document.getElementById('agentCommission').value) || 0;
       const finalPrice = basePrice + commission;
-      document.getElementById('finalPrice').value = finalPrice.toLocaleString();
+      document.getElementById('finalPrice').value = finalPrice;
       
       // Calculate total for all selected images
       let totalSheets = 0;
@@ -399,9 +422,13 @@
       if (selectedImageIds.includes(id)) {
         selectedImageIds = selectedImageIds.filter(x => x !== id);
         card.classList.remove('selected');
-        const badge = card.querySelector('.badge');
+        const badge = card.querySelector('.badge.bg-primary.rounded-pill');
         if (badge) badge.remove();
       } else {
+        if (selectedImageIds.length >= 30) {
+          alert('الحد الأقصى 30 صورة في الطلب الواحد');
+          return;
+        }
         selectedImageIds.push(id);
         card.classList.add('selected');
         const badge = document.createElement('div');
@@ -419,6 +446,7 @@
     function updateQuantitiesUI() {
       const container = document.getElementById('quantitiesContainer');
       const countDiv = document.getElementById('selectedCount');
+      const previousQuantities = new Map(Array.from(container.querySelectorAll('.qty-input'), input => [input.dataset.imageId, input.value]));
       if (!selectedImageIds.length) {
         container.innerHTML = '<div class="col-12 text-muted text-center py-3">اختر صوراً أولاً لتحديد الكميات</div>';
         countDiv.textContent = '';
@@ -427,7 +455,7 @@
       countDiv.textContent = `تم اختيار ${selectedImageIds.length} صورة — حدد الكمية لكل منها:`;
       container.innerHTML = '';
       selectedImageIds.forEach(id => {
-        const img = allImages.find(i => i.Image_ID === id);
+        const img = allImages.find(i => Number(i.Image_ID) === Number(id));
         if (!img) return;
         const col = document.createElement('div');
         col.className = 'col-12 col-md-6';
@@ -438,14 +466,15 @@
             <div class="card-body p-2 d-flex align-items-center gap-2">
               <img src="/api/orders/agent/images/${id}/file" style="width:50px;height:50px;object-fit:contain;border-radius:4px" onerror="this.style.display='none'">
               <div class="flex-grow-1">
-                <small class="fw-bold">${img.Original_Name}</small>
-                <small class="text-muted d-block">${img.Category}</small>
+                <small class="fw-bold">${escapeImageText(img.Original_Name)}</small>
+                <small class="text-muted d-block">${escapeImageText(img.Category)}</small>
               </div>
               <input type="number" class="form-control form-control-sm qty-input" data-image-id="${id}" placeholder="${escapeImageText(unit)}" step="0.1" min="0.1" required>
             </div>
           </div>
         `;
         container.appendChild(col);
+        col.querySelector('.qty-input').value = previousQuantities.get(String(id)) || '';
       });
       calculateTotal();
     }
@@ -456,8 +485,10 @@
       const hasClient = !!document.getElementById('clientId').value;
       const hasImages = selectedImageIds.length > 0;
       const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
-      const hasQtys = hasImages && qtyInputs.length > 0 && qtyInputs.every(i => i.value && parseFloat(i.value) > 0);
-      const hasPricing = !!(selectedPricingId && selectedMaterialId && document.getElementById('agentCommission').value && document.getElementById('finalPrice').value);
+      const hasQtys = hasImages && qtyInputs.length === selectedImageIds.length && qtyInputs.every(i => i.value && Number.isFinite(Number(i.value)) && Number(i.value) > 0);
+      const product = allPricing.find(p => Number(p.Pricing_ID) === Number(selectedPricingId));
+      const unitMatchesPricing = product && product.Unit === document.getElementById('quantityUnit').value;
+      const hasPricing = !!(selectedPricingId && selectedMaterialId && document.getElementById('agentCommission').value && document.getElementById('finalPrice').value && unitMatchesPricing);
       const ok = hasClient && hasImages && hasQtys && hasPricing;
       btn.disabled = !ok;
       if (hint) {
@@ -466,7 +497,8 @@
         if (!hasClient) missing.push('اختر العميل');
         if (!hasImages) missing.push('اختر صورة واحدة على الأقل');
         else if (!hasQtys) missing.push('أدخل الكمية لكل صورة');
-        if (!hasPricing) missing.push('اختر المنتج والخامة وأدخل عمولتك');
+        if (!product || !unitMatchesPricing) missing.push('اختر منتجًا مسعّرًا بوحدة ' + document.getElementById('quantityUnit').value);
+        else if (!hasPricing) missing.push('اختر الخامة وأدخل عمولتك');
         hint.textContent = 'متبقٍّ: ' + missing.join('، ');
       }
     }
@@ -568,7 +600,7 @@
           return;
         }
         container.innerHTML = '';
-        orders.forEach(o => {
+        orders.slice(0, 10).forEach(o => {
           const badge = o.Status === 'بانتظار الموافقة' ? 'bg-warning text-dark'
             : o.Approval_Status === 'rejected' ? 'bg-danger'
             : o.Status === 'تم التسليم' ? 'bg-success' : 'bg-primary';
@@ -576,10 +608,10 @@
           item.className = 'list-group-item d-flex justify-content-between align-items-center';
           item.innerHTML = `
             <div>
-              <div class="fw-bold">#${o.Task_ID} - ${o.Client_Name || 'عميل'}</div>
-              <small class="text-muted">${o.Machine_Type} · ${o.Material_Qty || 0} ${o.Quantity_Unit || 'لوح'} · $${o.Final_Price || 0} USD/${o.Quantity_Unit || 'لوح'}</small>
+              <div class="fw-bold">#${Number(o.Task_ID)} - ${escapeImageText(o.Client_Name || 'عميل')}</div>
+              <small class="text-muted">${escapeImageText(o.Machine_Type)} · ${Number(o.Material_Qty) || 0} ${escapeImageText(o.Quantity_Unit || 'لوح')} · $${Number(o.Final_Price) || 0} USD إجمالي الطلب</small>
             </div>
-            <span class="badge ${badge}">${o.Status}</span>
+            <span class="badge ${badge}">${escapeImageText(o.Status)}</span>
           `;
           container.appendChild(item);
         });
@@ -593,7 +625,17 @@
       const machineType = document.getElementById('machineType').value;
       const notes = document.getElementById('orderNotes').value;
       const qtys = {};
-      document.querySelectorAll('.qty-input').forEach(i => { qtys[i.dataset.imageId] = parseFloat(i.value); });
+      const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
+      if (qtyInputs.length !== selectedImageIds.length || qtyInputs.some(i => !Number.isFinite(Number(i.value)) || Number(i.value) <= 0)) {
+        alert('أدخل كمية صحيحة وموجبة لكل صورة');
+        return;
+      }
+      qtyInputs.forEach(i => { qtys[i.dataset.imageId] = Number(i.value); });
+      const materialQty = Object.values(qtys).reduce((total, qty) => total + qty, 0);
+      if (!Number.isFinite(materialQty) || materialQty <= 0) {
+        alert('مجموع الكميات غير صالح');
+        return;
+      }
 
       const basePrice = parseFloat(document.getElementById('basePrice').value.replace(/,/g, '')) || 0;
       const agentCommission = parseFloat(document.getElementById('agentCommission').value) || 0;
@@ -605,12 +647,13 @@
         Notes: notes,
         Image_IDs: selectedImageIds,
         Quantities: qtys,
+        Material_Qty: materialQty,
         Pricing_ID: selectedPricingId,
         Material_ID: selectedMaterialId,
         Agent_Price: basePrice,
         Agent_Commission: agentCommission,
-        Final_Price: finalPrice
-        , Quantity_Unit: document.getElementById('quantityUnit').value
+        Final_Price: finalPrice,
+        Quantity_Unit: document.getElementById('quantityUnit').value
       };
 
       document.getElementById('submitBtn').disabled = true;
@@ -623,7 +666,7 @@
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-        if (data.Task_ID) {
+        if (res.ok && data.Task_ID) {
           alert('✅ تم إرسال الطلب للاعتماد بنجاح!\nرقم الطلب: #' + data.Task_ID);
           document.getElementById('agentOrderForm').reset();
           selectedImageIds = [];
@@ -641,6 +684,7 @@
           renderImages();
           renderPricing();
           loadMyOrders();
+          loadOrderIdsForCustomDesign();
         } else {
           alert(data.error || 'فشل الإرسال');
         }
@@ -654,6 +698,8 @@
 
     // Event listeners
     document.getElementById('clientSearch').addEventListener('input', () => {
+      document.getElementById('clientId').value = '';
+      updateSubmitButton();
       clearTimeout(window.clientSearchTimer);
       window.clientSearchTimer = setTimeout(searchClients, 300);
     });
@@ -663,7 +709,17 @@
       }
     });
     document.getElementById('agentCommission').addEventListener('input', () => { calculateTotal(); updateSubmitButton(); });
-    document.getElementById('quantityUnit').addEventListener('change', () => { updateQuantitiesUI(); calculateTotal(); });
+    document.getElementById('quantityUnit').addEventListener('change', () => {
+      const unit = document.getElementById('quantityUnit').value;
+      const priceUnit = unit === 'قطعة' ? 'للقطعة' : 'للوح';
+      document.getElementById('quantityHelp').textContent = `أدخل الكمية لكل صورة بوحدة: ${unit}.`;
+      document.getElementById('basePriceLabel').textContent = `السعر الأساسي (${priceUnit})`;
+      document.getElementById('commissionLabel').textContent = `عمولتك (${priceUnit})`;
+      document.getElementById('finalPriceLabel').textContent = `السعر النهائي للعميل (${priceUnit})`;
+      updateQuantitiesUI();
+      updateSubmitButton();
+      calculateTotal();
+    });
     // Delegated: quantity inputs are re-created every time images are toggled
     document.getElementById('quantitiesContainer').addEventListener('input', e => {
       if (e.target && e.target.classList && e.target.classList.contains('qty-input')) { updateSubmitButton(); calculateTotal(); }
@@ -671,6 +727,7 @@
 
     // Init
     document.getElementById('newClientForm').addEventListener('submit', addNewClient);
+    document.getElementById('loadMoreImagesButton').addEventListener('click', () => loadImages(true));
     document.getElementById('newClientModal').addEventListener('hidden.bs.modal', clearStuckModalBackdrop);
     loadImages();
     loadPricing();
@@ -694,6 +751,12 @@
       formData.append('description', (document.getElementById('customDesignDescription').value || '').trim());
       formData.append('order_id', document.getElementById('customDesignOrderId').value || '');
       const files = document.getElementById('customDesignFiles').files;
+      if (files.length > 10 || Array.from(files).some(file => file.size > 10 * 1024 * 1024)) {
+        alert('يمكن رفع حتى 10 ملفات، بحد أقصى 10 ميغابايت لكل ملف');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-send"></i> إرسال طلب التصميم المخصص';
+        return;
+      }
       for (let i = 0; i < files.length && i < 10; i++) {
         formData.append('customDesignFiles', files[i]);
       }
@@ -739,11 +802,22 @@
     }
 
     async function loadMyCustomDesigns() {
+      const container = document.getElementById('myCustomDesigns');
       try {
         const res = await fetch('/api/agents/my/custom-designs', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-        if (!res.ok) return;
-        await res.json();
-      } catch (e) { console.error(e); }
+        if (!res.ok) throw new Error(`تعذر تحميل طلبات التصميم (${res.status})`);
+        const data = await res.json();
+        const requests = Array.isArray(data.requests) ? data.requests.slice(0, 5) : [];
+        const statuses = { pending: 'بانتظار الموافقة', in_progress: 'قيد التنفيذ', completed: 'مكتمل', cancelled: 'ملغى' };
+        container.innerHTML = requests.length ? requests.map(request => `
+          <div class="list-group-item px-0 d-flex justify-content-between gap-2">
+            <span><strong>${escapeImageText(request.Name)}</strong><span class="d-block text-muted">${request.Order_ID ? `مرتبط بالطلب #${Number(request.Order_ID)}` : 'طلب مستقل'}</span></span>
+            <span class="text-nowrap">${escapeImageText(statuses[request.Status] || request.Status)}</span>
+          </div>`).join('') : '<div class="text-muted py-2">لا توجد طلبات تصميم مخصص بعد.</div>';
+      } catch (e) {
+        console.error(e);
+        container.innerHTML = '<div class="text-danger py-2">تعذر تحميل طلبات التصميم.</div>';
+      }
     }
 
     loadOrderIdsForCustomDesign();

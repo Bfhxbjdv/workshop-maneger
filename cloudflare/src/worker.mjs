@@ -9,6 +9,14 @@ import inventoryTemplate from '../../views/inventory.ejs';
 import invoicesTemplate from '../../views/invoices.ejs';
 import usersTemplate from '../../views/users.ejs';
 import expensesTemplate from '../../views/expenses.ejs';
+import designsTemplate from '../../views/designs.ejs';
+import clientTemplate from '../../views/client.ejs';
+import accountTemplate from '../../views/account.ejs';
+import agentsTemplate from '../../views/agents.ejs';
+import agentDetailTemplate from '../../views/agent-detail.ejs';
+import { handleCustomOrders } from './custom-orders.mjs';
+import { handleDesignsApi } from './designs-api.mjs';
+import { handleAgentsApi } from './agents-api.mjs';
 import { landingHtml } from './landing.mjs';
 
 function publicLandingPage() {
@@ -26,7 +34,7 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
 const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers } });
-const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users']);
+const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users', '/account']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const withImageCompression = page => page.replace('</head>', '<script src="/js/image-compression.js?v=2"></script></head>');
 async function concurrently(items, limit, work) {
@@ -62,7 +70,12 @@ function legacyRolePage(template, user) {
   // few optional navigation tags.  Workers do not need a Node template engine
   // for these safe substitutions.
   return withImageCompression(template
+    .replace(/<%\s*if\s*\(user\.role === 'Admin' \|\| \(user\.permissions && user\.permissions\.([a-z]+)\)\)\s*\{\s*%>([\s\S]*?)<%\s*}\s*%>/g,
+      (_, permission, content) => user.role === 'Admin' || ({ Designer: ['clients', 'inventory', 'invoices'], Agent: ['clients', 'orders'] }[user.role] || []).includes(permission) ? content : '')
+    .replace(/<%=\s*\(user\.role === 'Admin' \|\| \(user\.permissions && user\.permissions\.admin\)\) \? '1' : '0'\s*%>/g, user.role === 'Admin' ? '1' : '0')
     .replace(/<%=\s*user\.name\s*%>/g, esc(user.name))
+    .replace(/<%=\s*user\.role\s*%>/g, esc(user.role || ''))
+    .replace(/<%=\s*user\.username\s*%>/g, esc(user.username || ''))
     .replace(/<%=\s*assetVersion\s*%>/g, 'cloudflare')
     .replace(/<%\s*if\s*\([\s\S]*?\)\s*\{\s*%>|<%\s*}\s*%>/g, ''));
 }
@@ -118,7 +131,9 @@ async function userFor(request, env) {
   try {
     const data = JSON.parse(dec.decode(unb64(body)));
     if (!data.sub || data.exp < Date.now() / 1000) return null;
-    return await env.DB.prepare('SELECT User_ID, Name, Role, Username, Permissions FROM Users WHERE User_ID=?').bind(data.sub).first();
+    return await env.DB.prepare(`SELECT u.User_ID, u.Name, u.Role, u.Username, u.Permissions
+      FROM Users u LEFT JOIN Agent_Profiles ap ON ap.User_ID=u.User_ID
+      WHERE u.User_ID=? AND (u.Role!='Agent' OR COALESCE(ap.Status,'active')='active')`).bind(data.sub).first();
   } catch { return null; }
 }
 function permitted(user, permission) {
@@ -128,7 +143,7 @@ function permitted(user, permission) {
   return ({ Designer: ['orders', 'clients', 'inventory', 'invoices'], Laser_Op: ['orders'], Router_Op: ['orders'], Agent: ['orders', 'clients'] }[user.Role] || []).includes(permission);
 }
 function orderScope(user) {
-  if (user.Role === 'Admin' || permitted(user, 'admin')) return { sql: '1=1', values: [] };
+  if (user.Role === 'Admin' || permitted(user, 'admin') || user.Role === 'Custom' && permitted(user, 'orders')) return { sql: '1=1', values: [] };
   if (user.Role === 'Designer') return { sql: 'o.Designer_ID=?', values: [user.User_ID] };
   if (user.Role === 'Laser_Op') return { sql: "o.Machine_Type='Laser' AND o.Approval_Status!='pending'", values: [] };
   if (user.Role === 'Router_Op') return { sql: "o.Machine_Type='Router' AND o.Approval_Status!='pending'", values: [] };
@@ -146,6 +161,24 @@ async function accessibleOrder(env, user, id) {
   return env.DB.prepare(`SELECT o.* FROM Orders o WHERE o.Task_ID=? AND ${scope.sql}`).bind(id, ...scope.values).first();
 }
 function cleanName(name) { return String(name || 'file').replace(/[^\w.()-]/g, '_').slice(0, 160) || 'file'; }
+async function logAction(env, action, userId, details = {}) {
+  try {
+    await env.DB.prepare('INSERT INTO System_Logs (Action, User_ID, Details) VALUES (?, ?, ?)')
+      .bind(action, userId, JSON.stringify(details).slice(0, 2000)).run();
+  } catch (error) { console.warn('Unable to record activity:', error); }
+}
+
+async function removeUnreferencedR2Files(env, paths) {
+  for (const path of new Set(paths.filter(value => value?.startsWith('r2://')))) {
+    const reference = await env.DB.prepare(`SELECT
+      EXISTS(SELECT 1 FROM Order_Files WHERE File_Path=?) OR
+      EXISTS(SELECT 1 FROM Agent_Images WHERE File_Path=?) OR
+      EXISTS(SELECT 1 FROM Designs WHERE FilePath=? OR ThumbnailPath=?) OR
+      EXISTS(SELECT 1 FROM Agent_Custom_Designs WHERE Thumbnail_Path=? OR INSTR(COALESCE(Image_Path,''),?)>0) AS in_use`)
+      .bind(path, path, path, path, path, path).first();
+    if (!reference?.in_use) await env.FILES.delete(path.slice(5));
+  }
+}
 
 export default {
   async fetch(request, env) {
@@ -156,12 +189,15 @@ export default {
     if (path === '/logout') return new Response(null, { status: 302, headers: { location: '/login', 'set-cookie': 'workshop_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' } });
     if (path === '/login' && request.method === 'POST') {
       const form = await request.formData();
-      const found = await env.DB.prepare('SELECT * FROM Users WHERE Username=?').bind(String(form.get('username') || '')).first();
+      const found = await env.DB.prepare(`SELECT u.* FROM Users u LEFT JOIN Agent_Profiles ap ON ap.User_ID=u.User_ID
+        WHERE u.Username=? AND (u.Role!='Agent' OR COALESCE(ap.Status,'active')='active')`).bind(String(form.get('username') || '')).first();
       if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) return html(loginPage('اسم المستخدم أو كلمة المرور غير صحيحة'), 401);
       const token = await makeToken(found, env.SESSION_SECRET);
       return new Response(null, { status: 302, headers: { location: '/', 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` } });
     }
-    if (request.method === 'GET' && pagePaths.has(path)) {
+    const clientPage = path.match(/^\/client\/(\d+)$/);
+    const agentDetailPage = path.match(/^\/agents\/(\d+)$/);
+    if (request.method === 'GET' && (pagePaths.has(path) || clientPage || agentDetailPage)) {
       const user = await userFor(request, env);
       if (path === '/login') return user ? Response.redirect(new URL('/', request.url), 302) : html(loginPage());
       if (!user && path === '/') return html(publicLandingPage(), 200, { 'cache-control': 'public, max-age=300' });
@@ -172,27 +208,54 @@ export default {
       if (path === '/' && user.Role === 'Agent') return Response.redirect(new URL('/agent', request.url), 302);
       if (path === '/' && user.Role === 'Admin') return Response.redirect(new URL('/admin', request.url), 302);
       if (path === '/admin' && user.Role === 'Admin') return html(legacyAdminPage({ name: user.Name }));
-      if (path === '/agent' && user.Role === 'Agent') return html(legacyRolePage(agentTemplate, { name: user.Name }));
-      if (path === '/designer' && user.Role === 'Designer') return html(legacyRolePage(designerTemplate, { name: user.Name }));
-      if (path === '/laser' && user.Role === 'Laser_Op') return html(legacyRolePage(laserTemplate, { name: user.Name }));
-      if (path === '/router' && user.Role === 'Router_Op') return html(legacyRolePage(routerTemplate, { name: user.Name }));
+      if (path === '/agent' && user.Role === 'Agent') return html(legacyRolePage(agentTemplate, { name: user.Name, role: user.Role, username: user.Username }));
+      if (path === '/designer' && user.Role === 'Designer') return html(legacyRolePage(designerTemplate, { name: user.Name, role: user.Role, username: user.Username }));
+      if (path === '/laser' && user.Role === 'Laser_Op') return html(legacyRolePage(laserTemplate, { name: user.Name, role: user.Role, username: user.Username }));
+      if (path === '/router' && user.Role === 'Router_Op') return html(legacyRolePage(routerTemplate, { name: user.Name, role: user.Role, username: user.Username }));
       if (path === '/clients' && permitted(user, 'clients')) return html(withImageCompression(clientsTemplate));
+      if (clientPage && permitted(user, 'clients')) {
+        const clientId = Number(clientPage[1]);
+        const client = await env.DB.prepare('SELECT Client_ID, Created_By FROM Clients WHERE Client_ID=?').bind(clientId).first();
+        if (!client || user.Role === 'Agent' && Number(client.Created_By) !== Number(user.User_ID)) return html('<h1>العميل غير موجود أو غير مصرح</h1>', 404);
+        return html(withImageCompression(clientTemplate.replace(/<%=\s*clientId\s*%>/g, String(clientId))));
+      }
       if (path === '/inventory' && permitted(user, 'inventory')) return html(withImageCompression(inventoryTemplate));
+      if (path === '/designs' && permitted(user, 'orders')) return html(legacyRolePage(designsTemplate, { name: user.Name, role: user.Role, username: user.Username }));
+      if (path === '/account') return html(legacyRolePage(accountTemplate, { name: user.Name, role: user.Role, username: user.Username }));
       if (path === '/invoices' && permitted(user, 'invoices')) return html(withImageCompression(invoicesTemplate.replaceAll('SYP', 'USD')));
       if (path === '/users' && user.Role === 'Admin') return html(withImageCompression(usersTemplate));
+      if (path === '/agents' && user.Role === 'Admin') return html(legacyRolePage(agentsTemplate, { name: user.Name, role: user.Role, username: user.Username }));
+      if (agentDetailPage && user.Role === 'Admin') {
+        const agent = await env.DB.prepare("SELECT User_ID FROM Users WHERE User_ID=? AND Role='Agent'").bind(Number(agentDetailPage[1])).first();
+        if (!agent) return html('<h1>الوكيل غير موجود</h1>', 404);
+        return html(legacyRolePage(agentDetailTemplate, { name: user.Name, role: user.Role, username: user.Username }));
+      }
       if (path === '/expenses' && user.Role === 'Admin') return html(legacyRolePage(expensesTemplate, { name: user.Name }));
       return html(withImageCompression(appPage({ id: user.User_ID, name: user.Name, role: user.Role, username: user.Username })));
     }
 
     if (path === '/api/auth/login' && request.method === 'POST') {
       const body = await request.json().catch(() => ({}));
-      const found = await env.DB.prepare('SELECT * FROM Users WHERE Username=?').bind(String(body.username || '')).first();
+      const found = await env.DB.prepare(`SELECT u.* FROM Users u LEFT JOIN Agent_Profiles ap ON ap.User_ID=u.User_ID
+        WHERE u.Username=? AND (u.Role!='Agent' OR COALESCE(ap.Status,'active')='active')`).bind(String(body.username || '')).first();
       if (!found || !body.password || !await bcrypt.compare(String(body.password), found.Password)) return json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' }, 401);
       const token = await makeToken(found, env.SESSION_SECRET);
       return json({ user: { id: found.User_ID, name: found.Name, role: found.Role } }, 200, { 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` });
     }
     if (path === '/api/auth/logout' && request.method === 'POST') return json({ ok: true }, 200, { 'set-cookie': 'workshop_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' });
     if (path === '/api/auth/me') { const a = await auth(request, env); return a.response || json({ user: a.user }); }
+    if (path.startsWith('/api/agents/')) {
+      const customResponse = await handleCustomOrders(request, env, await userFor(request, env), path, url);
+      if (customResponse) return customResponse;
+    }
+    if (path === '/api/agents' || path.startsWith('/api/agents/')) {
+      const agentResponse = await handleAgentsApi(request, env, await userFor(request, env), path, url);
+      if (agentResponse) return agentResponse;
+    }
+    if (path.startsWith('/api/designs')) {
+      const designsResponse = await handleDesignsApi(request, env, await userFor(request, env));
+      if (designsResponse) return designsResponse;
+    }
 
     if (path === '/admin/api/admin-stats' && request.method === 'GET') {
       const a = await auth(request, env); if (a.response) return a.response;
@@ -209,13 +272,30 @@ export default {
       return json({ totalUsers, totalClients, totalOrders, totalInvoices, totalExpenses: Number(totalExpenses?.total || 0), totalRevenue: Number(totalRevenue?.total || 0), pendingUploads, recentLogs: recentLogs.results });
     }
 
+    if (path === '/admin/api/logs' && request.method === 'GET') {
+      const a = await auth(request, env); if (a.response) return a.response;
+      if (a.user.Role !== 'Admin') return json({ error: 'سجل النشاطات للمدير فقط' }, 403);
+      const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+      const limit = 30;
+      const total = Number((await env.DB.prepare('SELECT COUNT(*) AS total FROM System_Logs').first())?.total || 0);
+      const pages = Math.max(1, Math.ceil(total / limit));
+      const currentPage = Math.min(page, pages);
+      const logs = (await env.DB.prepare('SELECT l.*, u.Name AS User_Name FROM System_Logs l LEFT JOIN Users u ON u.User_ID=l.User_ID ORDER BY l.Created_At DESC, l.Log_ID DESC LIMIT ? OFFSET ?').bind(limit, (currentPage - 1) * limit).all()).results;
+      return json({ logs, page: currentPage, pages, total });
+    }
+
     if (path === '/admin/api/expenses') {
       const a = await auth(request, env); if (a.response) return a.response;
       if (a.user.Role !== 'Admin') return json({ error: 'إدارة المصروفات للمدير فقط' }, 403);
       if (request.method === 'GET') {
         const term = `%${String(url.searchParams.get('search') || '').trim()}%`;
-        const expenses = (await env.DB.prepare('SELECT * FROM Expenses WHERE Description LIKE ? OR Category LIKE ? ORDER BY Expense_Date DESC, Expense_ID DESC LIMIT 100').bind(term, term).all()).results;
-        return json({ expenses, page: 1, pages: 1 });
+        const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+        const pageSize = 30;
+        const total = Number((await env.DB.prepare('SELECT COUNT(*) AS count FROM Expenses WHERE Description LIKE ? OR Category LIKE ?').bind(term, term).first())?.count || 0);
+        const pages = Math.max(1, Math.ceil(total / pageSize));
+        const currentPage = Math.min(page, pages);
+        const expenses = (await env.DB.prepare('SELECT * FROM Expenses WHERE Description LIKE ? OR Category LIKE ? ORDER BY Expense_Date DESC, Expense_ID DESC LIMIT ? OFFSET ?').bind(term, term, pageSize, (currentPage - 1) * pageSize).all()).results;
+        return json({ expenses, page: currentPage, pages, total });
       }
       if (request.method === 'POST') {
         const body = await request.json().catch(() => ({})), description = String(body.Description || '').trim(), amount = Number(body.Amount);
@@ -248,6 +328,18 @@ export default {
         return json({ success: true, User_ID: created.meta.last_row_id }, 201);
       } catch { return json({ error: 'اسم المستخدم مستخدم بالفعل' }, 409); }
     }
+    if (path === '/api/users/me' && request.method === 'PUT') {
+      const a = await auth(request, env); if (a.response) return a.response;
+      const body = await request.json().catch(() => ({}));
+      const current = await env.DB.prepare('SELECT Password, Username FROM Users WHERE User_ID=?').bind(a.user.User_ID).first();
+      if (!current || !await bcrypt.compare(String(body.currentPassword || ''), current.Password)) return json({ error: 'كلمة المرور الحالية غير صحيحة' }, 403);
+      const username = String(body.newUsername || current.Username).trim(), password = String(body.newPassword || '');
+      if (!username || password && password.length < 8) return json({ error: 'اسم المستخدم مطلوب، وكلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل' }, 400);
+      const duplicate = await env.DB.prepare('SELECT User_ID FROM Users WHERE Username=? AND User_ID<>?').bind(username, a.user.User_ID).first();
+      if (duplicate) return json({ error: 'اسم المستخدم مستخدم بالفعل' }, 409);
+      await env.DB.prepare('UPDATE Users SET Username=?, Password=COALESCE(?,Password) WHERE User_ID=?').bind(username, password ? await bcrypt.hash(password, 12) : null, a.user.User_ID).run();
+      return json({ success: true, username });
+    }
     const userRoute = path.match(/^\/api\/users\/(\d+)$/);
     if (userRoute) {
       const a = await auth(request, env); if (a.response) return a.response;
@@ -279,19 +371,27 @@ export default {
     if (path === '/api/clients/all' && request.method === 'GET') {
       const a = await auth(request, env, 'clients'); if (a.response) return a.response;
       const term = `%${url.searchParams.get('search') || ''}%`;
-      return json((await env.DB.prepare('SELECT * FROM Clients WHERE Full_Name LIKE ? OR Phone_Number LIKE ? ORDER BY Full_Name LIMIT 100').bind(term, term).all()).results);
+      const agent = a.user.Role === 'Agent';
+      return json((await env.DB.prepare(`SELECT Client_ID, Full_Name, Phone_Number FROM Clients WHERE (Full_Name LIKE ? OR Phone_Number LIKE ?) ${agent ? 'AND Created_By=?' : ''} ORDER BY Full_Name LIMIT 100`).bind(term, term, ...(agent ? [a.user.User_ID] : [])).all()).results);
     }
 
     if (path === '/api/clients') {
       const a = await auth(request, env, 'clients'); if (a.response) return a.response;
       if (request.method === 'GET') {
         const term = `%${url.searchParams.get('search') || ''}%`, agent = a.user.Role === 'Agent';
-        const query = `SELECT * FROM Clients WHERE (Full_Name LIKE ? OR Phone_Number LIKE ?) ${agent ? 'AND Created_By=?' : ''} ORDER BY Created_At DESC LIMIT 100`;
-        return json({ clients: (await env.DB.prepare(query).bind(term, term, ...(agent ? [a.user.User_ID] : [])).all()).results, page: 1, pages: 1 });
+        const where = `(Full_Name LIKE ? OR Phone_Number LIKE ?) ${agent ? 'AND Created_By=?' : ''}`;
+        const params = [term, term, ...(agent ? [a.user.User_ID] : [])];
+        const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+        const limit = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get('limit') || (url.searchParams.has('page') ? '20' : '100'), 10) || 20));
+        const total = Number((await env.DB.prepare(`SELECT COUNT(*) AS total FROM Clients WHERE ${where}`).bind(...params).first())?.total || 0);
+        const clients = (await env.DB.prepare(`SELECT * FROM Clients WHERE ${where} ORDER BY Created_At DESC, Client_ID DESC LIMIT ? OFFSET ?`).bind(...params, limit, (page - 1) * limit).all()).results;
+        return json({ clients, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
       }
       if (request.method === 'POST') {
-        const b = await request.json(); if (!String(b.Full_Name || '').trim()) return json({ error: 'اسم العميل مطلوب' }, 400);
-        const result = await env.DB.prepare('INSERT INTO Clients (Full_Name, Phone_Number, Notes, Created_By, Agent_ID) VALUES (?, ?, ?, ?, ?)').bind(b.Full_Name.trim(), b.Phone_Number || '', b.Notes || '', a.user.User_ID, a.user.Role === 'Agent' ? a.user.User_ID : null).run();
+        const b = await request.json().catch(() => ({})); if (!String(b.Full_Name || '').trim()) return json({ error: 'اسم العميل مطلوب' }, 400);
+        const rating = Number(b.Rating ?? 3);
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5) return json({ error: 'تقييم العميل يجب أن يكون من 1 إلى 5' }, 400);
+        const result = await env.DB.prepare('INSERT INTO Clients (Full_Name, Phone_Number, Notes, Rating, Created_By, Agent_ID) VALUES (?, ?, ?, ?, ?, ?)').bind(String(b.Full_Name).trim(), String(b.Phone_Number || ''), String(b.Notes || ''), rating, a.user.User_ID, a.user.Role === 'Agent' ? a.user.User_ID : null).run();
         return json({ client: await env.DB.prepare('SELECT * FROM Clients WHERE Client_ID=?').bind(result.meta.last_row_id).first() }, 201);
       }
     }
@@ -312,15 +412,19 @@ export default {
       }
       if (request.method === 'DELETE') {
         if (a.user.Role !== 'Admin') return json({ error: 'حذف العميل للمدير فقط' }, 403);
+        const financial = await env.DB.prepare('SELECT (SELECT COUNT(*) FROM Invoices WHERE Client_ID=?) + (SELECT COUNT(*) FROM Receipts WHERE Client_ID=?) AS total').bind(clientId, clientId).first();
+        if (Number(financial?.total) > 0) return json({ error: 'لا يمكن حذف عميل لديه فواتير أو إيصالات محفوظة' }, 409);
         const orders = (await env.DB.prepare('SELECT Task_ID FROM Orders WHERE Client_ID=?').bind(clientId).all()).results;
+        const paths = [];
         for (const order of orders) {
           const files = (await env.DB.prepare('SELECT File_Path FROM Order_Files WHERE Task_ID=?').bind(order.Task_ID).all()).results;
-          for (const file of files) if (file.File_Path?.startsWith('r2://')) await env.FILES.delete(file.File_Path.slice(5));
+          paths.push(...files.map(file => file.File_Path));
           await env.DB.prepare('DELETE FROM Order_Materials WHERE Task_ID=?').bind(order.Task_ID).run();
           await env.DB.prepare('DELETE FROM Order_Files WHERE Task_ID=?').bind(order.Task_ID).run();
           await env.DB.prepare('DELETE FROM Orders WHERE Task_ID=?').bind(order.Task_ID).run();
         }
         await env.DB.prepare('DELETE FROM Clients WHERE Client_ID=?').bind(clientId).run();
+        await removeUnreferencedR2Files(env, paths);
         return json({ success: true });
       }
     }
@@ -354,7 +458,7 @@ export default {
       const a = await auth(request, env, 'inventory'); if (a.response) return a.response;
       if (a.user.Role !== 'Admin') return json({ error: 'حذف الخامات للمدير فقط' }, 403);
       const materialId = Number(inventoryRoute[1]);
-      const used = await env.DB.prepare('SELECT Task_ID FROM Orders WHERE Material_ID=? LIMIT 1').bind(materialId).first();
+      const used = await env.DB.prepare('SELECT Task_ID FROM Orders WHERE Material_ID=? UNION SELECT Task_ID FROM Order_Materials WHERE Material_ID=? LIMIT 1').bind(materialId, materialId).first();
       if (used) return json({ error: 'لا يمكن حذف خامة مرتبطة بطلبات. عدّلها أو أرشفها أولًا.' }, 409);
       await env.DB.prepare('DELETE FROM Inventory WHERE Material_ID=?').bind(materialId).run();
       return json({ success: true });
@@ -364,15 +468,20 @@ export default {
       const a = await auth(request, env, 'invoices'); if (a.response) return a.response;
       if (request.method === 'GET') {
         const search = `%${String(url.searchParams.get('search') || '').trim()}%`, status = String(url.searchParams.get('status') || '').trim();
-        const invoices = (await env.DB.prepare(`SELECT inv.*, c.Full_Name AS Client_Name, o.Machine_Type FROM Invoices inv JOIN Clients c ON c.Client_ID=inv.Client_ID LEFT JOIN Orders o ON o.Task_ID=inv.Order_Task_ID WHERE (c.Full_Name LIKE ? OR inv.Invoice_Number LIKE ?) ${status ? 'AND inv.Status=?' : ''} ORDER BY inv.Created_At DESC LIMIT 100`).bind(search, search, ...(status ? [status] : [])).all()).results;
-        return json({ invoices, page: 1, pages: 1 });
+        const where = `(c.Full_Name LIKE ? OR inv.Invoice_Number LIKE ?) ${status ? 'AND inv.Status=?' : ''}`;
+        const params = [search, search, ...(status ? [status] : [])];
+        const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+        const limit = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get('limit') || (url.searchParams.has('page') ? '20' : '100'), 10) || 20));
+        const total = Number((await env.DB.prepare(`SELECT COUNT(*) AS total FROM Invoices inv JOIN Clients c ON c.Client_ID=inv.Client_ID WHERE ${where}`).bind(...params).first())?.total || 0);
+        const invoices = (await env.DB.prepare(`SELECT inv.*, c.Full_Name AS Client_Name, o.Machine_Type FROM Invoices inv JOIN Clients c ON c.Client_ID=inv.Client_ID LEFT JOIN Orders o ON o.Task_ID=inv.Order_Task_ID WHERE ${where} ORDER BY inv.Created_At DESC, inv.Invoice_ID DESC LIMIT ? OFFSET ?`).bind(...params, limit, (page - 1) * limit).all()).results;
+        return json({ invoices, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
       }
       if (request.method === 'POST') {
         if (a.user.Role !== 'Admin') return json({ error: 'إنشاء الفواتير للمدير فقط' }, 403);
         const body = await request.json().catch(() => ({})), taskId = Number(body.Order_Task_ID), amount = Number(body.Amount);
         const order = await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(taskId).first();
         if (!order || !Number.isFinite(amount) || amount < 0) return json({ error: 'الطلب والمبلغ الصحيحان مطلوبان' }, 400);
-        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${taskId}`;
+        const invoiceNumber = `INV-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${taskId}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
         const created = await env.DB.prepare('INSERT INTO Invoices (Order_Task_ID, Client_ID, Invoice_Number, Amount, Status) VALUES (?, ?, ?, ?, ?)').bind(taskId, order.Client_ID, invoiceNumber, amount, 'غير مدفوعة').run();
         return json({ Invoice_ID: created.meta.last_row_id, Invoice_Number: invoiceNumber }, 201);
       }
@@ -394,30 +503,93 @@ export default {
         if (statusFilter) { where.push('o.Status=?'); values.push(statusFilter); }
         if (machineFilter && ['Laser', 'Router'].includes(machineFilter)) { where.push('o.Machine_Type=?'); values.push(machineFilter); }
         if (Number.isInteger(clientFilter) && clientFilter > 0) { where.push('o.Client_ID=?'); values.push(clientFilter); }
-        const query = `SELECT o.*, c.Full_Name Client_Name, u.Name Designer_Name, i.Material_Name, i.Thickness FROM Orders o LEFT JOIN Clients c ON c.Client_ID=o.Client_ID LEFT JOIN Users u ON u.User_ID=o.Designer_ID LEFT JOIN Inventory i ON i.Material_ID=o.Material_ID WHERE ${where.join(' AND ')} ORDER BY o.Created_At DESC LIMIT 200`;
-        return json({ orders: (await env.DB.prepare(query).bind(...values).all()).results });
+        const search = String(url.searchParams.get('search') || '').trim();
+        if (search) { where.push('(c.Full_Name LIKE ? OR o.Notes LIKE ? OR CAST(o.Task_ID AS TEXT) LIKE ?)'); values.push(...Array(3).fill(`%${search}%`)); }
+        const from = 'FROM Orders o LEFT JOIN Clients c ON c.Client_ID=o.Client_ID LEFT JOIN Users u ON u.User_ID=o.Designer_ID LEFT JOIN Inventory i ON i.Material_ID=o.Material_ID';
+        const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+        const limit = Math.min(200, Math.max(1, Number.parseInt(url.searchParams.get('limit') || '200', 10) || 200));
+        const total = Number((await env.DB.prepare(`SELECT COUNT(*) AS total ${from} WHERE ${where.join(' AND ')}`).bind(...values).first())?.total || 0);
+        const sortOption = url.searchParams.get('sort');
+        const orderBy = sortOption === 'oldest' ? 'o.Created_At ASC, o.Task_ID ASC'
+          : sortOption === 'status' ? 'o.Status ASC, o.Created_At DESC, o.Task_ID DESC'
+          : sortOption === 'price_desc' ? 'o.Price DESC, o.Created_At DESC, o.Task_ID DESC'
+          : sortOption === 'price_asc' ? 'o.Price ASC, o.Created_At DESC, o.Task_ID DESC'
+          : 'o.Created_At DESC, o.Task_ID DESC';
+        const query = `SELECT o.*, c.Full_Name Client_Name, u.Name Designer_Name, i.Material_Name, i.Thickness,
+          (SELECT COUNT(*) FROM Order_Files f WHERE f.Task_ID=o.Task_ID AND f.File_Type='design' AND COALESCE(f.Is_Current,1)=1) AS File_Count
+          ${from} WHERE ${where.join(' AND ')} ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+        const orders = (await env.DB.prepare(query).bind(...values, limit, (page - 1) * limit).all()).results;
+        if (orders.length) {
+          const ids = orders.map(order => Number(order.Task_ID));
+          const rows = (await env.DB.prepare(`SELECT om.Task_ID, om.Material_ID, om.Quantity, i.Material_Name, i.Thickness FROM Order_Materials om JOIN Inventory i ON i.Material_ID=om.Material_ID WHERE om.Task_ID IN (${ids.map(() => '?').join(',')}) ORDER BY om.ID`).bind(...ids).all()).results;
+          const byTask = new Map(ids.map(id => [id, []]));
+          for (const row of rows) byTask.get(Number(row.Task_ID))?.push(row);
+          for (const order of orders) order.Materials = byTask.get(Number(order.Task_ID)) || [];
+        }
+        return json({ orders, page, pages: Math.max(1, Math.ceil(total / limit)), total });
       }
       if (request.method === 'POST') {
-        const b = await request.json(); if (!b.Client_ID || !['Laser', 'Router'].includes(b.Machine_Type)) return json({ error: 'بيانات الطلب غير مكتملة' }, 400);
+        const b = await request.json().catch(() => ({}));
+        const clientId = Number(b.Client_ID), client = Number.isInteger(clientId) ? await env.DB.prepare('SELECT Client_ID, Created_By FROM Clients WHERE Client_ID=?').bind(clientId).first() : null;
+        if (!client || !['Laser', 'Router'].includes(b.Machine_Type)) return json({ error: 'العميل أو نوع التشغيل غير صالح' }, 400);
+        if (a.user.Role === 'Agent' && Number(client.Created_By) !== Number(a.user.User_ID)) return json({ error: 'لا يمكنك إنشاء طلب لعميل وكيل آخر' }, 403);
         const pending = a.user.Role === 'Agent';
-        const finalPrice = Number(b.Final_Price ?? b.Price ?? 0), agentPrice = Number(b.Agent_Price ?? 0), commission = Number(b.Agent_Commission ?? 0);
+        const unit = b.Quantity_Unit === 'قطعة' ? 'قطعة' : 'لوح';
+        const imageIds = [...new Set(Array.isArray(b.Image_IDs) ? b.Image_IDs.map(Number) : [])].filter(Number.isInteger);
+        if (imageIds.length > 30) return json({ error: 'الحد الأقصى 30 صورة لكل طلب' }, 400);
+        const quantities = b.Quantities && typeof b.Quantities === 'object' ? b.Quantities : {};
+        const imageQuantities = imageIds.map(id => Number(quantities[id]));
+        if (pending && (!imageIds.length || imageQuantities.some(qty => !Number.isFinite(qty) || qty <= 0))) return json({ error: 'اختر صورة واحدة على الأقل وحدد كمية صحيحة لكل صورة' }, 400);
+        const requestedQty = pending ? imageQuantities.reduce((sum, qty) => sum + qty, 0) : Number(b.Material_Qty || 0);
+        const suppliedMaterials = Array.isArray(b.Materials) ? b.Materials.slice(0, 20) : [];
+        const materials = suppliedMaterials.map(row => ({ Material_ID: Number(row.Material_ID), Quantity: Number(row.Quantity) }));
+        if (materials.some(row => !Number.isInteger(row.Material_ID) || row.Material_ID <= 0 || !Number.isFinite(row.Quantity) || row.Quantity <= 0)) return json({ error: 'إحدى الخامات أو كمياتها غير صالحة' }, 400);
+        const materialId = Number(b.Material_ID) || materials[0]?.Material_ID || null;
+        if (materialId && !(await env.DB.prepare('SELECT Material_ID FROM Inventory WHERE Material_ID=?').bind(materialId).first())) return json({ error: 'الخامة المختارة غير موجودة' }, 400);
+        for (const row of materials) if (!(await env.DB.prepare('SELECT Material_ID FROM Inventory WHERE Material_ID=?').bind(row.Material_ID).first())) return json({ error: 'خامة الطلب غير موجودة' }, 400);
+        let agentPrice = Number(b.Agent_Price ?? 0), commission = Number(b.Agent_Commission ?? 0), finalPrice = Number(b.Final_Price ?? b.Price ?? 0);
+        if (pending) {
+          const product = await env.DB.prepare('SELECT * FROM Product_Pricing WHERE Pricing_ID=? AND Is_Active=1').bind(Number(b.Pricing_ID)).first();
+          if (!product || !materialId) return json({ error: 'اختر المنتج والخامة قبل إرسال الطلب' }, 400);
+          if (product.Unit !== unit) return json({ error: 'وحدة الطلب لا تطابق وحدة سعر المنتج' }, 400);
+          const configured = (await env.DB.prepare('SELECT Material_ID, Price FROM Product_Material_Pricing WHERE Pricing_ID=? AND Is_Active=1').bind(product.Pricing_ID).all()).results;
+          const selected = configured.find(row => Number(row.Material_ID) === materialId);
+          if (configured.length && !selected) return json({ error: 'هذه الخامة غير مسموحة للمنتج المختار' }, 400);
+          for (const imageId of imageIds) {
+            const image = await env.DB.prepare('SELECT Image_ID FROM Agent_Images WHERE Image_ID=?').bind(imageId).first();
+            if (!image) return json({ error: 'صورة الطلب غير موجودة' }, 400);
+            const allowed = (await env.DB.prepare('SELECT Material_ID FROM Agent_Image_Materials WHERE Image_ID=?').bind(imageId).all()).results;
+            if (allowed.length && !allowed.some(row => Number(row.Material_ID) === materialId)) return json({ error: 'الخامة المختارة لا تناسب إحدى الصور' }, 400);
+          }
+          if (!Number.isFinite(commission) || commission < 0) return json({ error: 'عمولة الوكيل غير صالحة' }, 400);
+          agentPrice = Number(selected?.Price ?? product.Base_Price);
+          finalPrice = agentPrice + commission;
+        }
+        if (!Number.isFinite(requestedQty) || requestedQty < 0 || !Number.isFinite(finalPrice) || finalPrice < 0) return json({ error: 'كمية الطلب أو سعره غير صالح' }, 400);
+        const stockQty = requestedQty || materials.reduce((sum, row) => sum + row.Quantity, 0);
+        const designerId = a.user.Role === 'Designer' ? a.user.User_ID : (a.user.Role === 'Admin' && Number.isInteger(Number(b.Designer_ID)) && Number(b.Designer_ID) > 0 ? Number(b.Designer_ID) : null);
         const result = await env.DB.prepare("INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Material_ID, Material_Qty, Quantity_Unit, Price, Agent_Price, Agent_Commission, Final_Price, Notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .bind(b.Client_ID, b.Designer_ID || null, a.user.User_ID, b.Machine_Type, pending ? 'بانتظار الموافقة' : 'قيد التصميم', pending ? 'pending' : 'approved', b.Material_ID || null, Number(b.Material_Qty || 0), b.Quantity_Unit === 'قطعة' ? 'قطعة' : 'لوح', finalPrice, agentPrice, commission, finalPrice, b.Notes || '').run();
+          .bind(clientId, designerId, a.user.User_ID, b.Machine_Type, pending ? 'بانتظار الموافقة' : 'قيد التصميم', pending ? 'pending' : 'approved', materialId, stockQty, unit, finalPrice, agentPrice, commission, finalPrice, String(b.Notes || '')).run();
         const taskId = result.meta.last_row_id;
-        const imageIds = Array.isArray(b.Image_IDs) ? b.Image_IDs.map(Number).filter(Number.isInteger).slice(0, 30) : [];
+        for (const material of materials) await env.DB.prepare('INSERT INTO Order_Materials (Task_ID, Material_ID, Quantity) VALUES (?, ?, ?)').bind(taskId, material.Material_ID, material.Quantity).run();
         for (const imageId of imageIds) {
           const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(imageId).first();
           if (image) {
-            await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, 'image', 1, ?)")
-              .bind(taskId, image.Original_Name, image.Stored_Name, image.File_Path, image.File_Size, a.user.User_ID).run();
-            if (image.Design_ID) {
-              const design = await env.DB.prepare('SELECT * FROM Designs WHERE Design_ID=?').bind(image.Design_ID).first();
-              if (design?.FilePath) await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, 0, ?, 'design', 1, ?)")
-                .bind(taskId, design.Original_Name, cleanName(design.Original_Name), design.FilePath, `التصميم المرتبط: ${design.Name}`, a.user.User_ID).run();
-            }
+            const imageLabel = pending ? `الكمية: ${quantities[imageId]} ${unit}` : '';
+            await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, 'image', 1, ?)")
+              .bind(taskId, image.Original_Name, image.Stored_Name, image.File_Path, image.File_Size, imageLabel, a.user.User_ID).run();
+            const latest = await env.DB.prepare(`SELECT f.* FROM Order_Files f JOIN Orders o ON o.Task_ID=f.Task_ID
+              WHERE o.Client_ID=? AND o.Task_ID<>? AND f.File_Type='design' AND COALESCE(f.Is_Current,1)=1
+              AND EXISTS(SELECT 1 FROM Order_Files i WHERE i.Task_ID=o.Task_ID AND i.File_Type='image' AND i.File_Path=?)
+              ORDER BY o.Created_At DESC, f.Created_At DESC, f.File_ID DESC LIMIT 1`).bind(clientId, taskId, image.File_Path).first();
+            const design = latest || (image.Design_ID ? await env.DB.prepare('SELECT * FROM Designs WHERE Design_ID=?').bind(image.Design_ID).first() : null);
+            const designPath = latest?.File_Path || design?.FilePath;
+            if (designPath) await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, 'design', 1, ?)")
+              .bind(taskId, latest?.Original_Name || design.Original_Name, latest?.Stored_Name || cleanName(design.Original_Name), designPath, latest?.File_Size || 0, latest ? 'أحدث نسخة محفوظة لهذا العميل' : `التصميم المرتبط: ${design.Name}`, a.user.User_ID).run();
           }
         }
         const order = await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(taskId).first();
+        await logAction(env, 'order_created', a.user.User_ID, { taskId, clientId, machine: b.Machine_Type, requestedQty, unit });
         return json({ Task_ID: taskId, order }, 201);
       }
     }
@@ -534,8 +706,8 @@ export default {
       if (a.user.Role !== 'Admin') return json({ error: 'حذف صور المكتبة للمدير فقط' }, 403);
       const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(Number(agentImageDelete[1])).first();
       if (!image) return json({ error: 'الصورة غير موجودة' }, 404);
-      if (image.File_Path?.startsWith('r2://')) await env.FILES.delete(image.File_Path.slice(5));
       await env.DB.prepare('DELETE FROM Agent_Images WHERE Image_ID=?').bind(image.Image_ID).run();
+      await removeUnreferencedR2Files(env, [image.File_Path]);
       return json({ success: true });
     }
 
@@ -545,28 +717,41 @@ export default {
       const form = await request.formData(), file = form.get('file'), thumbnail = form.get('thumbnail');
       const name = String(form.get('Name') || '').trim();
       if (!name || !(file instanceof File)) return json({ error: 'اسم التصميم وملفه مطلوبان' }, 400);
-      if (file.size > 25 * 1024 * 1024) return json({ error: 'حجم ملف التصميم يتجاوز 25 ميغابايت' }, 400);
+      if (!file.size || file.size > 25 * 1024 * 1024) return json({ error: 'ملف التصميم فارغ أو يتجاوز 25 ميغابايت' }, 400);
+      if (thumbnail instanceof File && thumbnail.size && (!thumbnail.type.startsWith('image/') || thumbnail.size > 10 * 1024 * 1024)) return json({ error: 'الصورة المصغرة يجب أن تكون صورة أصغر من 10 ميغابايت' }, 400);
       const fileKey = `designs/${crypto.randomUUID()}-${cleanName(file.name)}`;
-      await env.FILES.put(fileKey, file.stream(), { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
-      let thumbnailPath = null;
-      if (thumbnail instanceof File && thumbnail.size) {
-        if (!thumbnail.type.startsWith('image/') || thumbnail.size > 10 * 1024 * 1024) return json({ error: 'الصورة المصغرة يجب أن تكون صورة أصغر من 10 ميغابايت' }, 400);
-        const thumbKey = `design-thumbnails/${crypto.randomUUID()}-${cleanName(thumbnail.name)}`;
-        await env.FILES.put(thumbKey, thumbnail.stream(), { httpMetadata: { contentType: thumbnail.type } });
-        thumbnailPath = `r2://${thumbKey}`;
+      const uploaded = [];
+      try {
+        await env.FILES.put(fileKey, file.stream(), { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
+        uploaded.push(fileKey);
+        let thumbnailPath = null;
+        if (thumbnail instanceof File && thumbnail.size) {
+          const thumbKey = `design-thumbnails/${crypto.randomUUID()}-${cleanName(thumbnail.name)}`;
+          await env.FILES.put(thumbKey, thumbnail.stream(), { httpMetadata: { contentType: thumbnail.type } });
+          uploaded.push(thumbKey);
+          thumbnailPath = `r2://${thumbKey}`;
+        }
+        const rawPassword = String(form.get('Password') || '');
+        const result = await env.DB.prepare('INSERT INTO Designs (Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .bind(name, String(form.get('Category') || ''), String(form.get('Material') || ''), String(form.get('Thickness') || ''), Number(form.get('Width') || 0), Number(form.get('Height') || 0), String(form.get('Unit') || 'مم'), String(form.get('Notes') || ''), `r2://${fileKey}`, file.name, thumbnailPath, rawPassword ? await bcrypt.hash(rawPassword, 12) : null, a.user.User_ID).run();
+        return json({ success: true, Design_ID: result.meta.last_row_id }, 201);
+      } catch (error) {
+        await Promise.allSettled(uploaded.map(key => env.FILES.delete(key)));
+        return json({ error: 'تعذر تخزين التصميم. حاول مجددًا' }, 500);
       }
-      const rawPassword = String(form.get('Password') || '');
-      const result = await env.DB.prepare('INSERT INTO Designs (Name, Category, Material, Thickness, Width, Height, Unit, Notes, FilePath, Original_Name, ThumbnailPath, Password, CreatedBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(name, String(form.get('Category') || ''), String(form.get('Material') || ''), String(form.get('Thickness') || ''), Number(form.get('Width') || 0), Number(form.get('Height') || 0), String(form.get('Unit') || 'مم'), String(form.get('Notes') || ''), `r2://${fileKey}`, file.name, thumbnailPath, rawPassword ? await bcrypt.hash(rawPassword, 12) : null, a.user.User_ID).run();
-      return json({ success: true, Design_ID: result.meta.last_row_id }, 201);
     }
 
     if (path === '/api/agents/admin/designs' && request.method === 'GET') {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response;
       if (a.user.Role !== 'Admin') return json({ error: 'هذه القائمة للمدير فقط' }, 403);
       const search = `%${String(url.searchParams.get('search') || '').trim()}%`;
-      const designs = (await env.DB.prepare(`SELECT d.*, COUNT(ai.Image_ID) AS Image_Count, 1 AS Is_Active FROM Designs d LEFT JOIN Agent_Images ai ON ai.Design_ID=d.Design_ID WHERE d.Name LIKE ? OR d.Category LIKE ? GROUP BY d.Design_ID ORDER BY d.CreatedAt DESC LIMIT 100`).bind(search, search).all()).results;
-      return json({ designs, page: 1, pages: 1 });
+      const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
+      const limit = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get('limit') || '10', 10) || 10));
+      const total = Number((await env.DB.prepare('SELECT COUNT(*) AS count FROM Designs d WHERE d.Name LIKE ? OR d.Category LIKE ?').bind(search, search).first())?.count || 0);
+      const pages = Math.max(1, Math.ceil(total / limit));
+      const currentPage = Math.min(page, pages);
+      const designs = (await env.DB.prepare(`SELECT d.*, COUNT(ai.Image_ID) AS Image_Count, 1 AS Is_Active FROM Designs d LEFT JOIN Agent_Images ai ON ai.Design_ID=d.Design_ID WHERE d.Name LIKE ? OR d.Category LIKE ? GROUP BY d.Design_ID ORDER BY d.CreatedAt DESC, d.Design_ID DESC LIMIT ? OFFSET ?`).bind(search, search, limit, (currentPage - 1) * limit).all()).results;
+      return json({ designs, page: currentPage, pages, total });
     }
     const designDelete = path.match(/^\/api\/agents\/admin\/designs\/(\d+)$/);
     if (designDelete && request.method === 'DELETE') {
@@ -574,8 +759,10 @@ export default {
       if (a.user.Role !== 'Admin') return json({ error: 'حذف التصاميم للمدير فقط' }, 403);
       const design = await env.DB.prepare('SELECT * FROM Designs WHERE Design_ID=?').bind(Number(designDelete[1])).first();
       if (!design) return json({ error: 'التصميم غير موجود' }, 404);
-      for (const pathValue of [design.FilePath, design.ThumbnailPath]) if (pathValue?.startsWith('r2://')) await env.FILES.delete(pathValue.slice(5));
+      const linked = await env.DB.prepare('SELECT Image_ID FROM Agent_Images WHERE Design_ID=? LIMIT 1').bind(design.Design_ID).first();
+      if (linked) return json({ error: 'فك ارتباط صور المكتبة بهذا التصميم قبل حذفه' }, 409);
       await env.DB.prepare('DELETE FROM Designs WHERE Design_ID=?').bind(design.Design_ID).run();
+      await removeUnreferencedR2Files(env, [design.FilePath, design.ThumbnailPath]);
       return json({ success: true });
     }
     const imageDesignLink = path.match(/^\/api\/agents\/admin\/images\/(\d+)\/link-design$/);
@@ -617,13 +804,22 @@ export default {
       if (body.action === 'reject') {
         await env.DB.prepare("UPDATE Orders SET Approval_Status='rejected', Status='مرفوض', Notes=COALESCE(Notes,'') || ?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?")
           .bind(body.reason ? `\nسبب الرفض: ${String(body.reason).slice(0, 500)}` : '', order.Task_ID).run();
+        await logAction(env, 'order_rejected', a.user.User_ID, { taskId: order.Task_ID });
         return json({ success: true });
       }
       if (body.action !== 'approve' || !Number.isInteger(Number(body.designer_id))) return json({ error: 'اختر مصممًا صالحًا قبل الموافقة' }, 400);
       const designer = await env.DB.prepare("SELECT User_ID FROM Users WHERE User_ID=? AND Role='Designer'").bind(Number(body.designer_id)).first();
       if (!designer) return json({ error: 'المصمم المختار غير موجود' }, 400);
-      await env.DB.prepare("UPDATE Orders SET Approval_Status='approved', Status='قيد التصميم', Designer_ID=?, Agent_Approved_At=CURRENT_TIMESTAMP, Agent_Approved_By=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?")
-        .bind(designer.User_ID, a.user.User_ID, order.Task_ID).run();
+      const approvalStatements = [env.DB.prepare("UPDATE Orders SET Approval_Status='approved', Status='قيد التصميم', Designer_ID=?, Agent_Approved_At=CURRENT_TIMESTAMP, Agent_Approved_By=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=? AND Approval_Status='pending'")
+        .bind(designer.User_ID, a.user.User_ID, order.Task_ID)];
+      if (Number(order.Agent_Commission) > 0) approvalStatements.push(env.DB.prepare(`INSERT INTO Agent_Commissions
+        (Agent_ID, Order_ID, Client_ID, Commission_Amount, Commission_Type, Status)
+        SELECT ?, ?, ?, ?, 'order_total', 'pending'
+        WHERE NOT EXISTS(SELECT 1 FROM Agent_Commissions WHERE Order_ID=?)`)
+        .bind(order.Created_By, order.Task_ID, order.Client_ID, Number(order.Agent_Commission), order.Task_ID));
+      const approved = await env.DB.batch(approvalStatements);
+      if (!approved[0].meta.changes) return json({ error: 'تمت معالجة الطلب مسبقًا' }, 409);
+      await logAction(env, 'order_approved', a.user.User_ID, { taskId: order.Task_ID, designerId: designer.User_ID });
       return json({ success: true, order: await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(order.Task_ID).first() });
     }
 
@@ -632,28 +828,161 @@ export default {
       const a = await auth(request, env, 'orders'); if (a.response) return a.response;
       if (a.user.Role !== 'Admin') return json({ error: 'حذف الطلبات للمدير فقط' }, 403);
       const taskId = Number(orderDelete[1]);
+      const financial = await env.DB.prepare('SELECT (SELECT COUNT(*) FROM Invoices WHERE Order_Task_ID=?) + (SELECT COUNT(*) FROM Receipts WHERE Order_Task_ID=?) AS total').bind(taskId, taskId).first();
+      if (Number(financial?.total) > 0) return json({ error: 'لا يمكن حذف طلب لديه فاتورة أو إيصال محفوظ' }, 409);
+      const settledCommission = await env.DB.prepare("SELECT Commission_ID FROM Agent_Commissions WHERE Order_ID=? AND Status IN ('approved','paid') LIMIT 1").bind(taskId).first();
+      if (settledCommission) return json({ error: 'لا يمكن حذف طلب لديه عمولة معتمدة أو مدفوعة' }, 409);
       const files = (await env.DB.prepare('SELECT File_Path FROM Order_Files WHERE Task_ID=?').bind(taskId).all()).results;
-      for (const file of files) if (file.File_Path?.startsWith('r2://')) await env.FILES.delete(file.File_Path.slice(5));
-      await env.DB.prepare('DELETE FROM Order_Materials WHERE Task_ID=?').bind(taskId).run();
-      await env.DB.prepare('DELETE FROM Order_Files WHERE Task_ID=?').bind(taskId).run();
-      await env.DB.prepare('DELETE FROM Orders WHERE Task_ID=?').bind(taskId).run();
+      await env.DB.batch([
+        env.DB.prepare('UPDATE Agent_Custom_Designs SET Order_ID=NULL WHERE Order_ID=?').bind(taskId),
+        env.DB.prepare('DELETE FROM Agent_Commissions WHERE Order_ID=?').bind(taskId),
+        env.DB.prepare('DELETE FROM Notifications WHERE Task_ID=?').bind(taskId),
+        env.DB.prepare('DELETE FROM Order_Materials WHERE Task_ID=?').bind(taskId),
+        env.DB.prepare('DELETE FROM Order_Files WHERE Task_ID=?').bind(taskId),
+        env.DB.prepare('DELETE FROM Orders WHERE Task_ID=?').bind(taskId)
+      ]);
+      await removeUnreferencedR2Files(env, files.map(file => file.File_Path));
       return json({ success: true });
     }
 
     const status = path.match(/^\/api\/orders\/(\d+)\/status$/);
     if (status && request.method === 'PUT') {
-      const a = await auth(request, env, 'orders'); if (a.response) return a.response; const order = await accessibleOrder(env, a.user, Number(status[1])); if (!order) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
-      const next = (await request.json()).Status, valid = ['قيد التصميم', 'جاهز للقص', 'قيد التنفيذ', 'تم الانتهاء من القص', 'تم التغليف', 'تم التسليم']; if (!valid.includes(next)) return json({ error: 'حالة غير صالحة' }, 400);
-      if (next === 'تم الانتهاء من القص' && !order.Inventory_Deducted_At && order.Material_ID && Number(order.Material_Qty) > 0) {
-        if (!['Admin', 'Laser_Op', 'Router_Op'].includes(a.user.Role)) return json({ error: 'لا تملك صلاحية إتمام القص' }, 403);
-        const deduction = await env.DB.prepare('UPDATE Inventory SET Quantity=Quantity-? WHERE Material_ID=? AND Quantity>=?')
-          .bind(Number(order.Material_Qty), order.Material_ID, Number(order.Material_Qty)).run();
-        if (!deduction.meta.changes) return json({ error: 'كمية المخزون غير كافية لإتمام الطلب' }, 409);
-        await env.DB.prepare('UPDATE Orders SET Status=?, Inventory_Deducted_At=CURRENT_TIMESTAMP, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?').bind(next, order.Task_ID).run();
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const order = await accessibleOrder(env, a.user, Number(status[1])); if (!order) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
+      const next = (await request.json().catch(() => ({}))).Status;
+      const valid = ['قيد التصميم', 'جاهز للقص', 'قيد التنفيذ', 'تم الانتهاء من القص', 'تم التغليف', 'تم التسليم'];
+      if (!valid.includes(next)) return json({ error: 'حالة غير صالحة' }, 400);
+      if (next === order.Status) return json({ order });
+      const role = a.user.Role;
+      if (role === 'Agent') return json({ error: 'تغيير حالة الطلب ليس من صلاحية الوكيل' }, 403);
+      if (role === 'Laser_Op' && order.Machine_Type !== 'Laser' || role === 'Router_Op' && order.Machine_Type !== 'Router') return json({ error: 'هذا الطلب لا يتبع ماكينتك' }, 403);
+      const machineRole = ['Laser_Op', 'Router_Op'].includes(role);
+      if (machineRole && !['قيد التنفيذ', 'تم الانتهاء من القص', 'تم التسليم'].includes(next)) return json({ error: 'هذه الحالة ليست من صلاحية عامل القص' }, 403);
+      if (role === 'Designer' && !['قيد التصميم', 'جاهز للقص'].includes(next)) return json({ error: 'إتمام القص والتسليم من صلاحية عامل الماكينة أو المدير' }, 403);
+      if (order.Approval_Status === 'pending' || order.Approval_Status === 'rejected') return json({ error: 'الطلب لم يُعتمد بعد' }, 409);
+      if (order.Status === 'تم التسليم' || order.Inventory_Deducted_At && ['قيد التصميم', 'جاهز للقص', 'قيد التنفيذ'].includes(next)) return json({ error: 'لا يمكن إرجاع طلب بعد قصه أو تسليمه' }, 409);
+
+      if (next === 'تم الانتهاء من القص') {
+        if (!['Admin', 'Laser_Op', 'Router_Op'].includes(role)) return json({ error: 'لا تملك صلاحية إتمام القص' }, 403);
+        if (!['جاهز للقص', 'قيد التنفيذ'].includes(order.Status)) return json({ error: 'يجب أن يكون الطلب جاهزًا للقص قبل إتمامه' }, 409);
+        const materials = (await env.DB.prepare('SELECT Material_ID, SUM(Quantity) AS Quantity FROM Order_Materials WHERE Task_ID=? GROUP BY Material_ID').bind(order.Task_ID).all()).results;
+        const demand = materials.length ? materials : order.Material_ID && Number(order.Material_Qty) > 0 && order.Quantity_Unit === 'لوح'
+          ? [{ Material_ID: order.Material_ID, Quantity: Number(order.Material_Qty) }] : [];
+        if (!demand.length && order.Material_ID && order.Quantity_Unit === 'قطعة') return json({ error: 'حدد ألواح القص المستهلكة من المصمم قبل إتمام طلب القطع' }, 409);
+        let cost = 0;
+        for (const row of demand) {
+          const stock = await env.DB.prepare('SELECT Quantity, Cost_Per_Unit FROM Inventory WHERE Material_ID=?').bind(row.Material_ID).first();
+          if (!stock || Number(stock.Quantity) < Number(row.Quantity)) return json({ error: `المخزون غير كافٍ للخامة رقم ${row.Material_ID}` }, 409);
+          cost += Number(row.Quantity) * Number(stock.Cost_Per_Unit || 0);
+        }
+        const claim = `cut:${crypto.randomUUID()}`;
+        const checks = demand.map(() => 'AND EXISTS(SELECT 1 FROM Inventory WHERE Material_ID=? AND Quantity>=?)').join(' ');
+        const checkValues = demand.flatMap(row => [row.Material_ID, Number(row.Quantity)]);
+        const statements = [env.DB.prepare(`UPDATE Orders SET Inventory_Deducted_At=? WHERE Task_ID=? AND Inventory_Deducted_At IS NULL AND Status IN ('جاهز للقص','قيد التنفيذ') ${checks}`).bind(claim, order.Task_ID, ...checkValues)];
+        for (const row of demand) statements.push(env.DB.prepare('UPDATE Inventory SET Quantity=Quantity-? WHERE Material_ID=? AND EXISTS(SELECT 1 FROM Orders WHERE Task_ID=? AND Inventory_Deducted_At=?)').bind(Number(row.Quantity), row.Material_ID, order.Task_ID, claim));
+        statements.push(env.DB.prepare("UPDATE Orders SET Status='تم الانتهاء من القص', Cost=?, Profit=COALESCE(Price,0)-?, Inventory_Deducted_At=CURRENT_TIMESTAMP, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=? AND Inventory_Deducted_At=?").bind(cost, cost, order.Task_ID, claim));
+        const changes = await env.DB.batch(statements);
+        if (!changes[0].meta.changes) return json({ error: 'تعذر إتمام القص؛ تحقق من حالة الطلب والمخزون' }, 409);
+        await logAction(env, 'cut_completed', a.user.User_ID, { taskId: order.Task_ID, materials: demand });
+      } else if (next === 'تم التسليم') {
+        if (!['Admin', 'Laser_Op', 'Router_Op'].includes(role)) return json({ error: 'لا تملك صلاحية تسليم الطلب' }, 403);
+        if (!['تم الانتهاء من القص', 'تم التغليف'].includes(order.Status) || !order.Inventory_Deducted_At) return json({ error: 'أكمل القص وخصم المواد قبل تسليم الطلب' }, 409);
+        const claim = `delivery:${crypto.randomUUID()}`, price = Number(order.Price || order.Final_Price || 0);
+        const statements = [
+          env.DB.prepare("UPDATE Orders SET Updated_At=? WHERE Task_ID=? AND Status IN ('تم الانتهاء من القص','تم التغليف') AND Inventory_Deducted_At IS NOT NULL").bind(claim, order.Task_ID),
+          env.DB.prepare('UPDATE Clients SET Total_Spent=COALESCE(Total_Spent,0)+? WHERE Client_ID=? AND EXISTS(SELECT 1 FROM Orders WHERE Task_ID=? AND Updated_At=?)').bind(price, order.Client_ID, order.Task_ID, claim),
+          env.DB.prepare("UPDATE Orders SET Status='تم التسليم', Profit=?-COALESCE(Cost,0), Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=? AND Updated_At=?").bind(price, order.Task_ID, claim)
+        ];
+        const changes = await env.DB.batch(statements);
+        if (!changes[0].meta.changes) return json({ error: 'الطلب سُلّم مسبقًا أو تغيرت حالته' }, 409);
+        await logAction(env, 'order_delivered', a.user.User_ID, { taskId: order.Task_ID });
       } else {
-        await env.DB.prepare('UPDATE Orders SET Status=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?').bind(next, order.Task_ID).run();
+        const allowed = {
+          'قيد التصميم': ['جاهز للقص'],
+          'جاهز للقص': ['قيد التصميم'],
+          'قيد التنفيذ': ['جاهز للقص'],
+          'تم التغليف': ['تم الانتهاء من القص']
+        };
+        if (!allowed[next]?.includes(order.Status)) return json({ error: 'انتقال حالة الطلب غير مسموح' }, 409);
+        if (next === 'جاهز للقص' && !(await env.DB.prepare("SELECT File_ID FROM Order_Files WHERE Task_ID=? AND File_Type='design' AND COALESCE(Is_Current,1)=1 LIMIT 1").bind(order.Task_ID).first())) return json({ error: 'ارفع ملف التصميم قبل تحويل الطلب إلى القص' }, 409);
+        await env.DB.prepare('UPDATE Orders SET Status=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=? AND Status=?').bind(next, order.Task_ID, order.Status).run();
       }
       return json({ order: await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(order.Task_ID).first() });
+    }
+
+    const duplicateOrder = path.match(/^\/api\/orders\/(\d+)\/duplicate$/);
+    if (duplicateOrder && request.method === 'POST') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      const source = await accessibleOrder(env, a.user, Number(duplicateOrder[1]));
+      if (!source) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
+      const pending = a.user.Role === 'Agent';
+      const created = await env.DB.prepare("INSERT INTO Orders (Client_ID, Designer_ID, Created_By, Machine_Type, Status, Approval_Status, Material_ID, Material_Qty, Quantity_Unit, Price, Agent_Price, Agent_Commission, Final_Price, Notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .bind(source.Client_ID, pending ? null : (source.Designer_ID || a.user.User_ID), a.user.User_ID, source.Machine_Type, pending ? 'بانتظار الموافقة' : 'قيد التصميم', pending ? 'pending' : 'approved', source.Material_ID, source.Material_Qty, source.Quantity_Unit, source.Price, source.Agent_Price, source.Agent_Commission, source.Final_Price, `مكرر من طلب #${source.Task_ID} — ${source.Notes || ''}`).run();
+      const taskId = created.meta.last_row_id;
+      const materials = (await env.DB.prepare('SELECT Material_ID, Quantity FROM Order_Materials WHERE Task_ID=?').bind(source.Task_ID).all()).results;
+      for (const material of materials) await env.DB.prepare('INSERT INTO Order_Materials (Task_ID, Material_ID, Quantity) VALUES (?, ?, ?)').bind(taskId, material.Material_ID, material.Quantity).run();
+      const files = (await env.DB.prepare("SELECT * FROM Order_Files WHERE Task_ID=? AND (File_Type='image' OR COALESCE(Is_Current,1)=1)").bind(source.Task_ID).all()).results;
+      for (const file of files) await env.DB.prepare('INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Upload_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)')
+        .bind(taskId, file.Original_Name, file.Stored_Name, file.File_Path, file.File_Size, file.Label || '', file.File_Type, file.Upload_Type || 'design', a.user.User_ID).run();
+      return json({ Task_ID: taskId, order: await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(taskId).first() }, 201);
+    }
+
+    const copyFiles = path.match(/^\/api\/files\/copy\/(\d+)$/);
+    if (copyFiles && request.method === 'POST') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (!['Admin', 'Designer'].includes(a.user.Role)) return json({ error: 'استرجاع الملفات للمصمم أو المدير فقط' }, 403);
+      const taskId = Number(copyFiles[1]), target = await accessibleOrder(env, a.user, taskId);
+      if (!target) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
+      if (target.Inventory_Deducted_At || target.Status === 'تم التسليم') return json({ error: 'لا يمكن تعديل طلب منتهٍ' }, 409);
+      const body = await request.json().catch(() => ({}));
+      const ids = [...new Set(Array.isArray(body.fileIds) ? body.fileIds.map(Number) : [])].filter(Number.isInteger).slice(0, 50);
+      if (!ids.length) return json({ error: 'لم يتم اختيار ملفات' }, 400);
+      const selected = [];
+      for (const id of ids) {
+        const file = await env.DB.prepare('SELECT * FROM Order_Files WHERE File_ID=?').bind(id).first();
+        if (!file || !await accessibleOrder(env, a.user, file.Task_ID)) return json({ error: 'أحد الملفات غير موجود أو غير مصرح' }, 403);
+        selected.push(file);
+      }
+      if (selected.some(file => file.File_Type !== 'image')) await env.DB.prepare("UPDATE Order_Files SET Is_Current=0 WHERE Task_ID=? AND File_Type='design'").bind(taskId).run();
+      for (const file of selected) await env.DB.prepare('INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Upload_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)')
+        .bind(taskId, file.Original_Name, file.Stored_Name, file.File_Path, file.File_Size, file.Label || '', file.File_Type, file.Upload_Type || 'design', a.user.User_ID).run();
+      const design = selected.findLast(file => file.File_Type !== 'image');
+      if (design) await env.DB.prepare('UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?').bind(design.File_Path, design.Original_Name, taskId).run();
+      return json({ success: true, count: selected.length });
+    }
+
+    const deleteOrderFile = path.match(/^\/api\/files\/file\/(\d+)$/);
+    if (deleteOrderFile && request.method === 'DELETE') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (!['Admin', 'Designer'].includes(a.user.Role)) return json({ error: 'حذف ملفات الطلب للمصمم أو المدير فقط' }, 403);
+      const file = await env.DB.prepare('SELECT * FROM Order_Files WHERE File_ID=?').bind(Number(deleteOrderFile[1])).first();
+      if (!file || !await accessibleOrder(env, a.user, file.Task_ID)) return json({ error: 'الملف غير موجود أو غير مصرح' }, 404);
+      const order = await env.DB.prepare('SELECT * FROM Orders WHERE Task_ID=?').bind(file.Task_ID).first();
+      if (order.Inventory_Deducted_At) return json({ error: 'لا يمكن حذف ملف بعد إتمام القص' }, 409);
+      await env.DB.prepare('DELETE FROM Order_Files WHERE File_ID=?').bind(file.File_ID).run();
+      await removeUnreferencedR2Files(env, [file.File_Path]);
+      if (file.File_Type !== 'image') {
+        const remaining = await env.DB.prepare("SELECT * FROM Order_Files WHERE Task_ID=? AND File_Type='design' AND COALESCE(Is_Current,1)=1 ORDER BY File_ID DESC LIMIT 1").bind(file.Task_ID).first();
+        if (!remaining) await env.DB.prepare("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Status=CASE WHEN Status='جاهز للقص' THEN 'قيد التصميم' ELSE Status END, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?").bind(file.Task_ID).run();
+        else if (order.File_Path === file.File_Path) await env.DB.prepare('UPDATE Orders SET File_Path=?, File_Name=?, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?').bind(remaining.File_Path, remaining.Original_Name, file.Task_ID).run();
+      }
+      return json({ success: true });
+    }
+
+    const deleteOrderDesignFiles = path.match(/^\/api\/files\/(\d+)$/);
+    if (deleteOrderDesignFiles && request.method === 'DELETE') {
+      const a = await auth(request, env, 'orders'); if (a.response) return a.response;
+      if (!['Admin', 'Designer'].includes(a.user.Role)) return json({ error: 'حذف ملفات الطلب للمصمم أو المدير فقط' }, 403);
+      const taskId = Number(deleteOrderDesignFiles[1]), order = await accessibleOrder(env, a.user, taskId);
+      if (!order) return json({ error: 'الطلب غير موجود أو غير مصرح' }, 404);
+      if (order.Inventory_Deducted_At) return json({ error: 'لا يمكن حذف ملفات طلب بعد إتمام القص' }, 409);
+      const files = (await env.DB.prepare("SELECT File_Path FROM Order_Files WHERE Task_ID=? AND File_Type='design'").bind(taskId).all()).results;
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM Order_Files WHERE Task_ID=? AND File_Type='design'").bind(taskId),
+        env.DB.prepare("UPDATE Orders SET File_Path=NULL, File_Name=NULL, Status=CASE WHEN Status='جاهز للقص' THEN 'قيد التصميم' ELSE Status END, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?").bind(taskId)
+      ]);
+      await removeUnreferencedR2Files(env, files.map(file => file.File_Path));
+      return json({ success: true });
     }
 
     const fileRoute = path.match(/^\/api\/files\/(upload|list|download)\/(\d+)$/);
@@ -665,18 +994,48 @@ export default {
         return request.headers.get('X-Requested-With') || legacyPage ? json(files) : json({ files });
       }
       if (action === 'upload' && request.method === 'POST') {
-        const form = await request.formData(), files = form.getAll('files').filter(x => x instanceof File); if (!files.length) return json({ error: 'لم يتم اختيار ملفات' }, 400);
+        if (!['Admin', 'Designer'].includes(a.user.Role)) return json({ error: 'رفع ملفات التصميم للمدير أو المصمم فقط' }, 403);
+        if (order.Status === 'تم التسليم' || order.Status === 'تم الانتهاء من القص') return json({ error: 'لا يمكن تعديل ملفات طلب منتهٍ' }, 409);
+        const form = await request.formData(), files = form.getAll('files').filter(x => x instanceof File);
+        if (!files.length || files.length > 20 || files.some(file => !file.size || file.size > 25 * 1024 * 1024)) return json({ error: 'اختر حتى 20 ملفًا، بحد أقصى 25 ميغابايت لكل ملف' }, 400);
         let labels = []; try { labels = JSON.parse(String(form.get('labels') || '[]')); } catch { labels = []; }
         let materials = []; try { materials = JSON.parse(String(form.get('materials') || '[]')); } catch { materials = []; }
-        const saved = [];
-        await env.DB.prepare("UPDATE Order_Files SET Is_Current=0 WHERE Task_ID=? AND File_Type='design'").bind(taskId).run();
-        for (const [index, file] of files.slice(0, 20).entries()) {
-          const key = `orders/task-${taskId}/${crypto.randomUUID()}-${cleanName(file.name)}`; await env.FILES.put(key, file.stream(), { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
-          const label = String(labels[index] || '').slice(0, 200);
-          const inserted = await env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, 'design', 1, ?)").bind(taskId, file.name, key.split('/').at(-1), `r2://${key}`, file.size, label, a.user.User_ID).run(); saved.push({ File_ID: inserted.meta.last_row_id, Original_Name: file.name, File_Path: `r2://${key}` });
+        if (!Array.isArray(materials) || materials.length > 20) return json({ error: 'قائمة الخامات غير صالحة' }, 400);
+        materials = materials.map(row => ({ Material_ID: Number(row.Material_ID), Quantity: Number(row.Quantity) }));
+        if (materials.some(row => !Number.isInteger(row.Material_ID) || row.Material_ID <= 0 || !Number.isFinite(row.Quantity) || row.Quantity <= 0)) return json({ error: 'حدد خامة وكمية صحيحة لكل مادة' }, 400);
+        for (const row of materials) if (!(await env.DB.prepare('SELECT Material_ID FROM Inventory WHERE Material_ID=?').bind(row.Material_ID).first())) return json({ error: 'إحدى الخامات المحددة غير موجودة' }, 400);
+        if (order.Quantity_Unit === 'قطعة' && !materials.length && !(await env.DB.prepare('SELECT ID FROM Order_Materials WHERE Task_ID=? LIMIT 1').bind(taskId).first())) return json({ error: 'حدد عدد الألواح المستهلكة للطلب بالقطع قبل إرساله إلى الليزر' }, 400);
+        if (!materials.length && Number(order.Material_Qty) <= 0 && !(await env.DB.prepare('SELECT ID FROM Order_Materials WHERE Task_ID=? LIMIT 1').bind(taskId).first())) return json({ error: 'حدد كمية القص قبل رفع التصميم' }, 400);
+        const staged = [];
+        try {
+          for (const [index, file] of files.entries()) {
+            const key = `orders/task-${taskId}/${crypto.randomUUID()}-${cleanName(file.name)}`;
+            await env.FILES.put(key, file.stream(), { httpMetadata: { contentType: file.type || 'application/octet-stream' } });
+            staged.push({ key, file, label: String(labels[index] || '').slice(0, 200) });
+          }
+        } catch (error) {
+          await Promise.allSettled(staged.map(item => env.FILES.delete(item.key)));
+          return json({ error: 'تعذر تخزين الملفات. حاول مجددًا' }, 502);
         }
-        for (const material of Array.isArray(materials) ? materials.slice(0, 20) : []) if (Number.isInteger(Number(material.Material_ID)) && Number(material.Quantity) > 0) await env.DB.prepare('INSERT INTO Order_Materials (Task_ID, Material_ID, Quantity) VALUES (?, ?, ?)').bind(taskId, Number(material.Material_ID), Number(material.Quantity)).run();
-        await env.DB.prepare("UPDATE Orders SET File_Path=?, File_Name=?, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?").bind(saved.at(-1).File_Path, saved.at(-1).Original_Name, taskId).run(); return json({ files: saved, count: saved.length });
+        const statements = [env.DB.prepare("UPDATE Order_Files SET Is_Current=0 WHERE Task_ID=? AND File_Type='design'").bind(taskId)];
+        if (materials.length) {
+          statements.push(env.DB.prepare('DELETE FROM Order_Materials WHERE Task_ID=?').bind(taskId));
+          for (const material of materials) statements.push(env.DB.prepare('INSERT INTO Order_Materials (Task_ID, Material_ID, Quantity) VALUES (?, ?, ?)').bind(taskId, material.Material_ID, material.Quantity));
+        }
+        for (const item of staged) statements.push(env.DB.prepare("INSERT INTO Order_Files (Task_ID, Original_Name, Stored_Name, File_Path, File_Size, Label, File_Type, Is_Current, Uploaded_By) VALUES (?, ?, ?, ?, ?, ?, 'design', 1, ?)").bind(taskId, item.file.name, item.key.split('/').at(-1), `r2://${item.key}`, item.file.size, item.label, a.user.User_ID));
+        const last = staged.at(-1), note = String(form.get('notes') || '').trim().slice(0, 2000);
+        statements.push(env.DB.prepare("UPDATE Orders SET File_Path=?, File_Name=?, Material_ID=COALESCE(?,Material_ID), Material_Qty=CASE WHEN Material_Qty<=0 THEN ? ELSE Material_Qty END, Notes=CASE WHEN ?='' THEN Notes ELSE COALESCE(Notes,'') || '\n' || ? END, Status='جاهز للقص', Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=?")
+          .bind(`r2://${last.key}`, last.file.name, materials[0]?.Material_ID || null, materials.reduce((sum, row) => sum + row.Quantity, 0), note, note, taskId));
+        let results;
+        try { results = await env.DB.batch(statements); }
+        catch (error) {
+          await Promise.allSettled(staged.map(item => env.FILES.delete(item.key)));
+          return json({ error: 'تعذر حفظ بيانات الملفات؛ لم يتغير الطلب' }, 500);
+        }
+        const insertOffset = materials.length ? 2 + materials.length : 1;
+        const saved = staged.map((item, index) => ({ File_ID: results[insertOffset + index].meta.last_row_id, Original_Name: item.file.name, File_Path: `r2://${item.key}` }));
+        await logAction(env, 'design_uploaded', a.user.User_ID, { taskId, fileCount: saved.length, materials });
+        return json({ files: saved, count: saved.length });
       }
       if (action === 'download' && request.method === 'GET') {
         const file = await env.DB.prepare("SELECT * FROM Order_Files WHERE Task_ID=? AND File_Type!='image' AND COALESCE(Is_Current,1)=1 ORDER BY Created_At DESC LIMIT 1").bind(taskId).first(); if (!file?.File_Path?.startsWith('r2://')) return json({ error: 'لا يوجد ملف تصميم مخزن في R2 لهذا الطلب' }, 404);

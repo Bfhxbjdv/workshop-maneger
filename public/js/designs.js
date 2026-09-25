@@ -11,6 +11,7 @@ let aotSearchTimer = null;
 let designsLoadRequest = 0;
 let viewerRequestId = 0;
 let viewerObjectUrl = null;
+let pendingDesignDownloadId = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadDesigns();
@@ -30,7 +31,9 @@ function handleDesignAction(event) {
   if (action) {
     event.stopPropagation();
     const id = Number(action.dataset.designId);
-    if (action.dataset.designAction === 'download' || action.dataset.designAction === 'view-download') return;
+    if (action.dataset.designAction === 'download' || action.dataset.designAction === 'view-download') {
+      return downloadDesignFile(event, id);
+    }
     if (action.dataset.designAction === 'open') return openViewDesign(id);
   }
   const card = event.target.closest('[data-design-card]');
@@ -170,6 +173,20 @@ async function renderMissingCardPreviews(designs) {
 }
 
 // ===================== UPLOAD (single) =====================
+async function saveDesignPermissions(designId, userIds) {
+  if (!Number.isSafeInteger(Number(designId)) || Number(designId) < 1) {
+    throw new Error('رقم التصميم غير صالح');
+  }
+  const res = await fetch(`/api/designs/${designId}/permissions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userIds })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.success !== true) {
+    throw new Error(data.error || 'لم يؤكد الخادم حفظ الصلاحيات');
+  }
+}
+
 async function uploadDesign() {
   const file = document.getElementById('dFile').files[0];
   const name = document.getElementById('dName').value.trim();
@@ -202,19 +219,23 @@ async function uploadDesign() {
     const res = await fetch('/api/designs', { method: 'POST', body: fd });
     let data = {};
     try { data = await res.json(); } catch {}
-    if (!res.ok) throw new Error(data.error || 'فشل الرفع');
+    if (!res.ok || data.success !== true || !Number.isSafeInteger(Number(data.Design_ID)) || Number(data.Design_ID) < 1) {
+      throw new Error(data.error || 'لم يؤكد الخادم رفع التصميم');
+    }
     uploaded = true;
     const sel = document.getElementById('dPermitted');
+    let permissionError = null;
     if (sel && sel.selectedOptions.length > 0 && ![...sel.selectedOptions].some(o => o.value === '__all__')) {
       try {
-        await fetch(`/api/designs/${data.Design_ID}/permissions`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userIds: [...sel.selectedOptions].map(o => parseInt(o.value)) })
-        });
-      } catch {}
+        await saveDesignPermissions(data.Design_ID, [...sel.selectedOptions].map(o => parseInt(o.value)));
+      } catch (error) { permissionError = error; }
     }
     try { bootstrap.Modal.getInstance(document.getElementById('uploadDesignModal'))?.hide(); } catch {}
-    showToast('تم رفع التصميم بنجاح', 'success');
+    if (permissionError) {
+      showToast(`تم رفع التصميم #${data.Design_ID}، لكن لم تُحفظ صلاحياته: ${permissionError.message}. راجع صلاحياته قبل استخدامه.`, 'danger');
+    } else {
+      showToast('تم رفع التصميم بنجاح', 'success');
+    }
   } catch (e) { showToast(e.message, 'danger'); }
   finally {
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع';
@@ -397,23 +418,32 @@ async function uploadBatch() {
     const res = await fetch('/api/designs/batch', { method: 'POST', body: fd });
     let data = {};
     try { data = await res.json(); } catch {}
-    if (!res.ok) throw new Error(data.error || 'فشل الرفع');
+    if (!res.ok || data.success !== true || !Array.isArray(data.created) || !data.created.length) {
+      throw new Error(data.error || 'لم يؤكد الخادم رفع التصاميم');
+    }
 
     const permSel = document.getElementById('bPermitted');
+    const permissionFailures = [];
     if (permSel && permSel.selectedOptions.length > 0 && ![...permSel.selectedOptions].some(o => o.value === '__all__')) {
       const permIds = [...permSel.selectedOptions].map(o => parseInt(o.value));
-      for (const did of (data.created || [])) {
+      for (const did of data.created) {
         try {
-          await fetch(`/api/designs/${did}/permissions`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userIds: permIds })
-          });
-        } catch {}
+          await saveDesignPermissions(did, permIds);
+        } catch (error) { permissionFailures.push(`#${did}: ${error.message}`); }
       }
     }
 
     try { bootstrap.Modal.getInstance(document.getElementById('batchUploadModal'))?.hide(); } catch {}
-    showToast(`تم رفع ${data.count || 0} تصميم(ات) بنجاح`, 'success');
+    const uploadErrors = Array.isArray(data.errors) ? data.errors : [];
+    if (permissionFailures.length || uploadErrors.length) {
+      const details = [
+        uploadErrors.length ? `تعذر رفع بعض الملفات: ${uploadErrors.join('؛ ')}` : '',
+        permissionFailures.length ? `لم تُحفظ صلاحيات ${permissionFailures.length} تصميم(ات): ${permissionFailures.join('؛ ')}` : ''
+      ].filter(Boolean).join(' | ');
+      showToast(`تم رفع ${data.created.length} تصميم(ات)، لكن العملية لم تكتمل: ${details}. راجع النتائج قبل الاستخدام.`, 'danger');
+    } else {
+      showToast(`تم رفع ${data.created.length} تصميم(ات) بنجاح`, 'success');
+    }
   } catch (e) { showToast(e.message, 'danger'); }
   finally {
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-cloud-upload"></i> رفع الكل';
@@ -465,22 +495,27 @@ async function saveDesignEdit() {
   if (document.getElementById('eClearPassword').checked) fd.append('ClearPassword', '1');
   const btn = document.querySelector('#editDesignModal .modal-footer .btn-warning');
   btn.disabled = true;
+  let saved = false;
   try {
     let res = await fetch('/api/designs/' + id, { method: 'PUT', body: fd });
     let data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'فشل الحفظ');
+    if (!res.ok || data.success !== true) throw new Error(data.error || 'لم يؤكد الخادم حفظ التصميم');
+    saved = true;
     const sel = document.getElementById('ePermitted');
     const chosen = [...sel.selectedOptions].map(o => o.value);
     const selAll = chosen.includes('__all__') || chosen.length === 0;
-    await fetch(`/api/designs/${id}/permissions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIds: selAll ? [] : chosen.map(v => parseInt(v)) })
-    });
+    let permissionError = null;
+    try {
+      await saveDesignPermissions(id, selAll ? [] : chosen.map(v => parseInt(v)));
+    } catch (error) { permissionError = error; }
     bootstrap.Modal.getInstance(document.getElementById('editDesignModal')).hide();
-    showToast('تم الحفظ', 'success');
-    loadDesigns();
+    if (permissionError) {
+      showToast(`تم حفظ مواصفات التصميم #${id}، لكن لم تُحفظ صلاحياته: ${permissionError.message}. أعد فتحه لتصحيح الصلاحيات.`, 'danger');
+    } else {
+      showToast('تم الحفظ', 'success');
+    }
   } catch (e) { showToast(e.message, 'danger'); }
-  finally { btn.disabled = false; }
+  finally { btn.disabled = false; if (saved) loadDesigns(); }
 }
 
 async function deleteDesign() {
@@ -559,7 +594,10 @@ async function downloadDesignFile(event, id) {
   event?.preventDefault();
   event?.stopPropagation();
   try {
-    const design = allDesigns.find(item => item.Design_ID === id);
+    id = Number(id);
+    if (!Number.isSafeInteger(id) || id < 1) return;
+    const design = (currentViewDesign?.Design_ID === id ? currentViewDesign : null) ||
+      allDesigns.find(item => item.Design_ID === id);
     if (!design?.PasswordProtected) {
       startBrowserDownload(id);
       return;
@@ -571,6 +609,11 @@ async function downloadDesignFile(event, id) {
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
+      if (res.status === 403 && j.needsPassword) {
+        pendingDesignDownloadId = id;
+        await openViewDesign(id);
+        return;
+      }
       showToast(j.error || 'لا يمكن تحميل هذا الملف', 'danger');
       return;
     }
@@ -725,17 +768,27 @@ function togglePreviewMode() {
 }
 
 async function verifyDesignPassword() {
+  if (!currentViewDesign) return;
   const pass = document.getElementById('viewPassword').value;
   document.getElementById('viewPasswordError').textContent = '';
-  const res = await fetch(`/api/designs/${currentViewDesign.Design_ID}/verify-password`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Password: pass })
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) { document.getElementById('viewPasswordError').textContent = data.error || 'كلمة المرور غير صحيحة'; return; }
-  document.getElementById('viewPasswordWrap').classList.add('d-none');
-  document.getElementById('viewContent').classList.remove('d-none');
-  window.currentViewDesign.NeedsPassword = false;
-  loadViewFile(currentViewDesign);
+  try {
+    const res = await fetch(`/api/designs/${currentViewDesign.Design_ID}/verify-password`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ Password: pass })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { document.getElementById('viewPasswordError').textContent = data.error || 'كلمة المرور غير صحيحة'; return; }
+    document.getElementById('viewPasswordWrap').classList.add('d-none');
+    document.getElementById('viewContent').classList.remove('d-none');
+    currentViewDesign.NeedsPassword = false;
+    loadViewFile(currentViewDesign);
+    if (pendingDesignDownloadId === currentViewDesign.Design_ID) {
+      const id = pendingDesignDownloadId;
+      pendingDesignDownloadId = null;
+      await downloadDesignFile(null, id);
+    }
+  } catch (error) {
+    document.getElementById('viewPasswordError').textContent = 'تعذر الاتصال. حاول مجددًا.';
+  }
 }
 
 // ===================== ADD TO ORDER =====================
@@ -838,7 +891,12 @@ function showToast(msg, type = 'info') {
   const colors = { info: 'primary', success: 'success', warning: 'warning', danger: 'danger' };
   const t = document.createElement('div');
   t.className = `alert alert-${colors[type] || 'info'} alert-dismissible fade show`;
-  t.innerHTML = `${msg} <button type="button" class="btn-close" data-bs-dismiss="alert"></button>`;
+  t.textContent = String(msg);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn-close';
+  close.dataset.bsDismiss = 'alert';
+  t.appendChild(close);
   c.appendChild(t);
   setTimeout(() => t.remove(), 5000);
 }

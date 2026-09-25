@@ -77,6 +77,12 @@
   <script>
     let expPage = 1;
 
+    function escapeExpenseHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[char]);
+    }
+
     async function loadExpenses(page) {
       if (page) expPage = page;
       const search = document.getElementById('expenseSearch')?.value || '';
@@ -85,12 +91,12 @@
       tbody.innerHTML = !d.expenses?.length
         ? '<tr><td colspan="7" class="text-center">لا توجد مصروفات</td></tr>'
         : d.expenses.map(e => `<tr>
-          <td>${e.Expense_ID}</td><td>${e.Description}</td>
-          <td><span class="badge bg-secondary">${e.Category}</span></td>
+          <td>${Number(e.Expense_ID)}</td><td>${escapeExpenseHtml(e.Description)}</td>
+          <td><span class="badge bg-secondary">${escapeExpenseHtml(e.Category)}</span></td>
           <td class="text-danger fw-bold">${parseFloat(e.Amount).toFixed(2)}</td>
-          <td>${e.Expense_Date}</td>
-          <td><small>${e.Notes || ''}</small></td>
-          <td><button class="btn btn-sm btn-outline-danger" onclick="deleteExpense(${e.Expense_ID})"><i class="bi bi-trash"></i></button></td>
+          <td>${escapeExpenseHtml(e.Expense_Date)}</td>
+          <td><small>${escapeExpenseHtml(e.Notes || '')}</small></td>
+          <td><button class="btn btn-sm btn-outline-danger" onclick="deleteExpense(${Number(e.Expense_ID)})"><i class="bi bi-trash"></i></button></td>
         </tr>`).join('');
       const ul = document.getElementById('expensesPagination');
       ul.innerHTML = '';
@@ -108,7 +114,7 @@
       document.getElementById('totalExpenses').textContent = parseFloat(stats.totalExpenses).toFixed(2);
       document.getElementById('totalRevenue').textContent = parseFloat(stats.totalRevenue).toFixed(2);
       document.getElementById('netProfit').textContent = parseFloat(stats.totalRevenue - stats.totalExpenses).toFixed(2);
-      document.getElementById('expenseCount').textContent = d.expenses?.length || 0;
+      document.getElementById('expenseCount').textContent = Number.isFinite(Number(d.total)) ? Number(d.total) : (d.expenses?.length || 0);
     }
 
     document.getElementById('expenseSearch').addEventListener('input', debounce(() => loadExpenses(1), 300));
@@ -118,7 +124,7 @@
       ['expenseId','expenseDesc','expenseAmount','expenseNotes'].forEach(id => document.getElementById(id).value = '');
       document.getElementById('expenseCat').value = 'أخرى';
       document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
-      new bootstrap.Modal(document.getElementById('expenseModal')).show();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('expenseModal')).show();
     }
 
     async function saveExpense() {
@@ -141,9 +147,15 @@
 
     async function deleteExpense(id) {
       if (!confirm('حذف هذا المصروف؟')) return;
-      await fetch(`/admin/api/expenses/${id}`, { method: 'DELETE' });
-      showToast('تم الحذف ✓', 'success');
-      loadExpenses();
+      try {
+        const response = await fetch(`/admin/api/expenses/${id}`, { method: 'DELETE' });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result.error) throw new Error(result.error || 'تعذر حذف المصروف');
+        showToast('تم الحذف ✓', 'success');
+        loadExpenses();
+      } catch (error) {
+        showToast(error.message || 'تعذر حذف المصروف', 'danger');
+      }
     }
   </script>
 <button class="btn-back" title="العودة للخلف" onclick="history.length > 1 ? history.back() : (window.location.href = '/')"><i class="bi bi-arrow-right"></i></button>

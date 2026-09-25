@@ -39,7 +39,7 @@
         <nav class="nav flex-column mt-2">
           <a class="nav-link active" href="#" data-tab="dashboard"><i class="bi bi-speedometer2"></i> الإحصائيات</a>
           <a class="nav-link" href="#" data-tab="expenses"><i class="bi bi-cash-stack"></i> المصروفات</a>
-          <a class="nav-link" href="#" data-tab="sync"><i class="bi bi-cloud-arrow-up"></i> مزامنة Drive</a>
+          <a class="nav-link" href="#" data-tab="sync"><i class="bi bi-cloud-arrow-up"></i> التخزين السحابي</a>
           <a class="nav-link" href="#" data-tab="backup"><i class="bi bi-hdd-stack"></i> النسخ الاحتياطي</a>
           <a class="nav-link" href="#" data-tab="logs"><i class="bi bi-journal-text"></i> سجل النشاطات</a>
           <a class="nav-link" href="#" data-tab="system"><i class="bi bi-info-circle"></i> معلومات النظام</a>
@@ -93,37 +93,19 @@
           <nav><ul class="pagination pagination-sm" id="expensesPagination"></ul></nav>
         </div>
 
-        <!-- Sync Tab -->
+        <!-- Cloud storage Tab -->
         <div class="tab-content d-none" id="tab-sync">
-          <div class="d-flex justify-content-between mb-3">
-            <h4><i class="bi bi-cloud-arrow-up"></i> مزامنة Google Drive</h4>
-            <div>
-              <span id="syncStatus" class="badge bg-secondary me-2"></span>
-              <button class="btn btn-primary btn-sm" onclick="syncNow()"><i class="bi bi-arrow-repeat"></i> مزامنة الآن</button>
-            </div>
-          </div>
-          <div class="alert alert-info">عند رفع ملف وعدم وجود إنترنت، يُحفظ محلياً ويُرفع تلقائياً عند توفر الإنترنت.</div>
-          <div class="table-responsive">
-            <table class="table table-sm">
-              <thead><tr><th>#</th><th>الطلب</th><th>الملف</th><th>الحالة</th><th>الخطأ</th><th>التاريخ</th><th></th></tr></thead>
-              <tbody id="syncTableBody"></tbody>
-            </table>
-          </div>
+          <h4><i class="bi bi-cloud-arrow-up"></i> التخزين السحابي</h4>
+          <div class="alert alert-info">تُرفع الملفات مباشرةً إلى Cloudflare R2، لذلك لا توجد قائمة مزامنة Google Drive أو زر مزامنة في هذه النسخة. يلزم اتصال بالإنترنت لإتمام الرفع.</div>
+          <a class="btn btn-outline-primary" href="https://dash.cloudflare.com/792957923acef0d90ba4759b29725ab0/r2/overview" target="_blank" rel="noopener noreferrer">فتح مساحة R2</a>
         </div>
 
         <!-- Backup Tab -->
         <div class="tab-content d-none" id="tab-backup">
           <h4><i class="bi bi-hdd-stack"></i> النسخ الاحتياطي</h4>
-          <button class="btn btn-primary mt-2" onclick="createBackup()"><i class="bi bi-database"></i> إنشاء نسخة احتياطية الآن</button>
-          <div id="backupResult" class="mt-2"></div>
-          <hr>
-          <h6>النسخ السابقة</h6>
-          <div class="table-responsive">
-            <table class="table table-sm">
-              <thead><tr><th>الملف</th><th>الحجم</th><th>التاريخ</th></tr></thead>
-              <tbody id="backupFilesBody"></tbody>
-            </table>
-          </div>
+          <div class="alert alert-warning">نسخ قاعدة D1 واستعادتها تُدار من Cloudflare Time Travel. ملفات الصور والتصاميم محفوظة في R2 بشكل منفصل ولا تدخل ضمن نسخة D1.</div>
+          <a class="btn btn-outline-primary me-2" href="https://dash.cloudflare.com/792957923acef0d90ba4759b29725ab0/workers/d1/databases/17599596-a90d-4555-b81a-1e90a9e0773f/console" target="_blank" rel="noopener noreferrer">فتح إدارة D1</a>
+          <a class="btn btn-outline-secondary" href="https://dash.cloudflare.com/792957923acef0d90ba4759b29725ab0/r2/overview" target="_blank" rel="noopener noreferrer">فتح ملفات R2</a>
         </div>
 
         <!-- Logs Tab -->
@@ -141,7 +123,7 @@
         <!-- System Tab -->
         <div class="tab-content d-none" id="tab-system">
           <h4><i class="bi bi-info-circle"></i> معلومات النظام</h4>
-          <div class="row mt-3"><div class="col-md-6"><table class="table table-sm" id="systemInfoTable"></table></div></div>
+          <div class="row mt-3"><div class="col-md-6"><table class="table table-sm"><tbody><tr><td>التطبيق</td><td>Cloudflare Workers</td></tr><tr><td>قاعدة البيانات</td><td>Cloudflare D1</td></tr><tr><td>الملفات</td><td>Cloudflare R2</td></tr></tbody></table></div></div>
         </div>
 
         <!-- Library Images Tab -->
@@ -473,10 +455,7 @@
         const tab = this.dataset.tab;
         if (tab === 'dashboard') loadAdminStats();
         if (tab === 'expenses') loadExpenses();
-        if (tab === 'sync') loadSyncQueue();
-        if (tab === 'backup') loadBackups();
         if (tab === 'logs') loadLogs();
-        if (tab === 'system') loadSystemInfo();
       });
     });
 
@@ -496,7 +475,7 @@
 
       document.getElementById('recentLogs').innerHTML = d.recentLogs.length
         ? '<div class="table-responsive"><table class="table table-sm"><tr><th>الإجراء</th><th>المستخدم</th><th>التفاصيل</th><th>التاريخ</th></tr>' +
-          d.recentLogs.map(l => `<tr><td>${l.Action}</td><td>${l.User_Name || '-'}</td><td>${l.Details || ''}</td><td><small>${l.Created_At}</small></td></tr>`).join('') + '</table></div>'
+          d.recentLogs.map(l => `<tr><td>${escapeImageText(l.Action)}</td><td>${escapeImageText(l.User_Name || '-')}</td><td>${escapeImageText(l.Details || '')}</td><td><small>${escapeImageText(l.Created_At)}</small></td></tr>`).join('') + '</table></div>'
         : '<div class="text-muted">لا توجد نشاطات بعد</div>';
     }
 
@@ -510,11 +489,11 @@
       if (!tbody) return;
       tbody.innerHTML = !d.expenses?.length ? '<tr><td colspan="7" class="text-center">لا توجد مصروفات</td></tr>'
         : d.expenses.map(e => `<tr>
-          <td>${e.Expense_ID}</td><td>${e.Description}</td>
-          <td><span class="badge bg-secondary">${e.Category}</span></td>
+          <td>${e.Expense_ID}</td><td>${escapeImageText(e.Description)}</td>
+          <td><span class="badge bg-secondary">${escapeImageText(e.Category)}</span></td>
           <td>${parseFloat(e.Amount).toFixed(2)}</td>
-          <td>${e.Expense_Date}</td>
-          <td><small>${e.Notes || ''}</small></td>
+          <td>${escapeImageText(e.Expense_Date)}</td>
+          <td><small>${escapeImageText(e.Notes || '')}</small></td>
           <td>
             <button class="btn btn-sm btn-outline-danger" onclick="deleteExpense(${e.Expense_ID})"><i class="bi bi-trash"></i></button>
           </td>
@@ -563,56 +542,6 @@
       loadExpenses();
     }
 
-    // ============ SYNC QUEUE ============
-    async function loadSyncQueue() {
-      const items = await fetch('/admin/api/upload-queue').then(r => r.json());
-      const statusColors = { 'pending': 'warning', 'uploading': 'info', 'done': 'success', 'failed': 'danger' };
-      const pending = items.filter(i => i.Status === 'pending').length;
-      document.getElementById('syncStatus').textContent = `${pending} ملف بانتظار الرفع`;
-      document.getElementById('syncStatus').className = `badge bg-${pending > 0 ? 'warning' : 'success'} me-2`;
-      document.getElementById('syncTableBody').innerHTML = items.length === 0
-        ? '<tr><td colspan="7" class="text-center text-muted">لا توجد ملفات في قائمة الانتظار</td></tr>'
-        : items.map(i => `<tr>
-          <td>${i.Queue_ID}</td><td>#${i.Task_ID}</td>
-          <td><small>${i.Original_Name}</small></td>
-          <td><span class="badge bg-${statusColors[i.Status]}">${i.Status === 'pending' ? 'بانتظار الرفع' : i.Status === 'uploading' ? 'جاري الرفع' : i.Status === 'done' ? 'تم' : 'فشل'}</span></td>
-          <td><small class="text-danger">${i.Error || ''}</small></td>
-          <td><small>${i.Created_At}</small></td>
-          <td>${i.Status === 'failed' ? `<button class="btn btn-sm btn-outline-warning" onclick="retrySync(${i.Queue_ID})"><i class="bi bi-arrow-repeat"></i></button>` : ''}</td>
-        </tr>`).join('');
-    }
-
-    async function retrySync(id) {
-      await fetch(`/admin/api/upload-queue/retry/${id}`, { method: 'POST' });
-      showToast('سيتم إعادة المحاولة', 'info');
-      loadSyncQueue();
-    }
-
-    async function syncNow() {
-      const btn = event.target;
-      btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جاري...';
-      const r = await fetch('/admin/api/sync-now', { method: 'POST' }).then(r => r.json());
-      showToast(`تمت المزامنة: ${r.synced} نجاح, ${r.failed} فشل`, r.failed > 0 ? 'warning' : 'success');
-      btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> مزامنة الآن';
-      loadSyncQueue();
-    }
-
-    // ============ BACKUP ============
-    async function createBackup() {
-      const btn = event.target; btn.disabled = true;
-      const r = await fetch('/admin/api/backup', { method: 'POST' }).then(r => r.json());
-      if (r.error) { showToast(r.error, 'danger'); } else { showToast('تم إنشاء النسخة الاحتياطية', 'success'); }
-      btn.disabled = false;
-      loadBackups();
-    }
-
-    async function loadBackups() {
-      const files = await fetch('/admin/api/backups').then(r => r.json());
-      document.getElementById('backupFilesBody').innerHTML = files.length === 0
-        ? '<tr><td colspan="3" class="text-muted">لا توجد نسخ احتياطية</td></tr>'
-        : files.map(f => `<tr><td>${f.name}</td><td>${(f.size / 1024).toFixed(1)} KB</td><td>${new Date(f.date).toLocaleString()}</td></tr>`).join('');
-    }
-
     // ============ LOGS ============
     let logsPage = 1;
     async function loadLogs(page) {
@@ -620,22 +549,8 @@
       const d = await fetch(`/admin/api/logs?page=${logsPage}`).then(r => r.json());
       document.getElementById('logsTableBody').innerHTML = !d.logs?.length
         ? '<tr><td colspan="5" class="text-muted">لا توجد نشاطات</td></tr>'
-        : d.logs.map(l => `<tr><td>${l.Log_ID}</td><td>${l.Action}</td><td>${l.User_Name || '-'}</td><td><small>${l.Details || ''}</small></td><td><small>${l.Created_At}</small></td></tr>`).join('');
+        : d.logs.map(l => `<tr><td>${l.Log_ID}</td><td>${escapeImageText(l.Action)}</td><td>${escapeImageText(l.User_Name || '-')}</td><td><small>${escapeImageText(l.Details || '')}</small></td><td><small>${escapeImageText(l.Created_At)}</small></td></tr>`).join('');
       renderPagination2('logsPagination', d.page, d.pages, loadLogs);
-    }
-
-    // ============ SYSTEM INFO ============
-    async function loadSystemInfo() {
-      const info = await fetch('/admin/api/system-info').then(r => r.json());
-      document.getElementById('systemInfoTable').innerHTML = `
-        <tr><td>Node.js</td><td>${info.nodeVersion}</td></tr>
-        <tr><td>المنصة</td><td>${info.platform}</td></tr>
-        <tr><td>مدة التشغيل</td><td>${Math.floor(info.uptime / 60)} دقيقة</td></tr>
-        <tr><td>الذاكرة المستخدمة</td><td>${(info.memoryUsage?.heapUsed / 1024 / 1024).toFixed(1)} MB</td></tr>
-        <tr><td>حجم قاعدة البيانات</td><td>${(info.dbSize / 1024).toFixed(1)} KB</td></tr>
-        <tr><td>حجم التخزين</td><td>${(info.storageSize / 1024 / 1024).toFixed(1)} MB</td></tr>
-        <tr><td>Google Drive</td><td>${info.driveConfigured ? '<span class="text-success">✔ مهيأ</span>' : '<span class="text-danger">✘ غير مهيأ</span>'}</td></tr>
-      `;
     }
 
     // Pagination helper

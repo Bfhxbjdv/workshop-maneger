@@ -179,6 +179,7 @@
           <div class="mb-3">
             <label class="form-label"><i class="bi bi-image"></i> صور الطلب (اختياري)</label>
             <input type="file" id="uploadImage" class="form-control" accept="image/*" multiple>
+            <button type="button" class="btn btn-sm btn-outline-primary mt-2" onclick="uploadOrderImages()"><i class="bi bi-cloud-upload"></i> رفع الصور فقط</button>
           </div>
           <div class="mb-3" id="existingFilesWrap" style="display:none">
             <label class="form-label text-muted"><i class="bi bi-folder2-open"></i> الملفات الموجودة لهذا الطلب</label>
@@ -187,7 +188,7 @@
           </div>
           <div class="card bg-light mb-3">
             <div class="card-header d-flex justify-content-between">
-              <span><i class="bi bi-boxes"></i> المواد المستهلكة</span>
+              <span><i class="bi bi-boxes"></i> ألواح القص والخامات</span>
               <button type="button" class="btn btn-sm btn-success" onclick="addMaterialRow()"><i class="bi bi-plus"></i> إضافة مادة</button>
             </div>
             <div class="card-body" id="materialsContainer">
@@ -198,7 +199,7 @@
                   </select>
                 </div>
                 <div class="col-md-3">
-                  <input type="number" class="form-control mat-qty" placeholder="الكمية" step="0.1" min="0">
+                  <input type="number" class="form-control mat-qty" placeholder="عدد الألواح" step="0.1" min="0">
                 </div>
                 <div class="col-md-2">
                   <span class="form-text mat-stock"></span>
@@ -213,12 +214,13 @@
             </div>
           </div>
           <div class="mb-2">
+            <div id="uploadRequestedQuantity" class="small text-primary fw-bold mb-2"></div>
             <label class="form-label">ملاحظات</label>
             <textarea id="uploadNotes" class="form-control" rows="2" placeholder="ملاحظات إضافية من المصمم..."></textarea>
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-primary" onclick="uploadDesignFile()"><i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد</button>
+          <button class="btn btn-primary" onclick="uploadDesignFile(this)"><i class="bi bi-cloud-upload"></i> رفع الملفات مع المواد</button>
         </div>
       </div>
     </div>
