@@ -28,7 +28,7 @@ const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(
 const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers } });
 const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-const withImageCompression = page => page.replace('</head>', '<script src="/js/image-compression.js?v=1"></script></head>');
+const withImageCompression = page => page.replace('</head>', '<script src="/js/image-compression.js?v=2"></script></head>');
 async function concurrently(items, limit, work) {
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
