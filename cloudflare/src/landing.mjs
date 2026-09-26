@@ -2,6 +2,7 @@ export const landingHtml = String.raw`<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>مجموعة قزنجي | تصنيع الأثاث والخشبيات</title>
 <meta name="description" content="مجموعة قزنجي في حلب، سوريا: تصنيع غرف النوم والمطابخ والمكاتب، قص ليزر، حفر CNC، تلبيس PVC وإكسسوارات بلاستيكية للصناعات الخشبية.">
+<meta name="google-site-verification" content="SGFSZ8gDgPocGRFVr3zLSVtqGXdT3jg3HrdHuXgz6IE">
 <meta name="robots" content="index,follow,max-image-preview:large">
 <link rel="canonical" href="https://www.kazanjigroup.com/">
 <link rel="icon" type="image/png" sizes="160x160" href="/favicon.png">
