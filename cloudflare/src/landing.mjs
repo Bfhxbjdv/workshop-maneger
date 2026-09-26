@@ -1,6 +1,28 @@
 export const landingHtml = String.raw`<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>مجموعة قزنجي | حلول الصناعات الخشبية</title><meta name="description" content="مجموعة قزنجي للتصنيع الخشبي، قص الليزر، حفر CNC، تلبيس PVC وإكسسوارات الصناعات الخشبية في حلب.">
+<title>مجموعة قزنجي | تصنيع الأثاث والخشبيات</title>
+<meta name="description" content="مجموعة قزنجي في حلب، سوريا: تصنيع غرف النوم والمطابخ والمكاتب، قص ليزر، حفر CNC، تلبيس PVC وإكسسوارات بلاستيكية للصناعات الخشبية.">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<link rel="canonical" href="https://www.kazanjigroup.com/">
+<link rel="icon" type="image/png" sizes="160x160" href="/favicon.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" sizes="160x160" href="/favicon.png">
+<meta name="theme-color" content="#252522">
+<meta property="og:type" content="website"><meta property="og:locale" content="ar_SY">
+<meta property="og:site_name" content="مجموعة قزنجي">
+<meta property="og:title" content="مجموعة قزنجي | تصنيع الأثاث والخشبيات">
+<meta property="og:description" content="تصنيع غرف نوم ومطابخ ومكاتب، قص ليزر، حفر CNC، تلبيس PVC وإكسسوارات للصناعات الخشبية في حلب، سوريا.">
+<meta property="og:url" content="https://www.kazanjigroup.com/">
+<meta property="og:image" content="https://www.kazanjigroup.com/images/kazanji-kitchen.png">
+<meta property="og:image:alt" content="تصنيع المطابخ والأثاث الخشبي لدى مجموعة قزنجي">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">{
+  "@context":"https://schema.org",
+  "@graph":[
+    {"@type":"WebSite","@id":"https://www.kazanjigroup.com/#website","url":"https://www.kazanjigroup.com/","name":"مجموعة قزنجي","alternateName":"Kazanji Group","inLanguage":["ar","en"]},
+    {"@type":"Organization","@id":"https://www.kazanjigroup.com/#organization","name":"مجموعة قزنجي","alternateName":"Kazanji Group","url":"https://www.kazanjigroup.com/","logo":"https://www.kazanjigroup.com/favicon.png","description":"تصنيع الأثاث والخشبيات وخدمات قص الليزر وحفر CNC وتلبيس PVC وإكسسوارات الصناعات الخشبية في حلب، سوريا.","telephone":"+963981163985","email":"info@kazanjigroup.com","address":[{"@type":"PostalAddress","streetAddress":"المدينة الصناعية الشيخ نجار","addressLocality":"حلب","addressCountry":"SY"},{"@type":"PostalAddress","streetAddress":"بوابة القصب","addressLocality":"حلب","addressCountry":"SY"}]}
+  ]
+}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Alexandria:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 figure{margin:0}

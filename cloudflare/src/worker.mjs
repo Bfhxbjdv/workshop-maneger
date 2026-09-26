@@ -32,8 +32,9 @@ function publicLandingPage() {
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
-const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
-const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...headers } });
+const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
+const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
+const privateRedirect = (location, request) => new Response(null, { status: 302, headers: { location: new URL(location, request.url).href, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
 const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users', '/account']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const withImageCompression = page => page.replace('</head>', '<script src="/js/image-compression.js?v=2"></script></head>');
@@ -45,6 +46,11 @@ async function concurrently(items, limit, work) {
 }
 function loginPage(error = '') {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>تسجيل الدخول - مجموعة قزنجي</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"><link rel="stylesheet" href="/css/style.css"></head><body class="login-page"><div class="container"><div class="row justify-content-center align-items-center min-vh-100 py-4"><div class="col-12 col-sm-9 col-md-6 col-lg-5"><main class="card border-0"><div class="card-body p-4 p-md-5"><div class="text-center mb-4"><img class="login-logo" src="/images/kazanji-group-logo.svg" alt="شعار مجموعة قزنجي"><p class="login-brand-name">مجموعة قزنجي</p><h1 class="h4 mt-3">إدارة الورشة</h1><p class="text-muted mb-0">أهلاً بعودتك — سجّل دخولك لمتابعة سير العمل</p></div>${error ? `<div class="alert alert-danger" role="alert">${esc(error)}</div>` : ''}<form method="post" action="/login"><div class="mb-3"><label class="form-label" for="username">اسم المستخدم</label><input class="form-control form-control-lg" id="username" name="username" required autocomplete="username" autofocus></div><div class="mb-3"><label class="form-label" for="password">كلمة المرور</label><input class="form-control form-control-lg" id="password" type="password" name="password" required autocomplete="current-password"></div><button class="btn btn-primary btn-lg w-100" type="submit">دخول إلى النظام</button></form><a href="/" class="d-block text-center mt-4 text-decoration-none" style="color:#826d53">العودة إلى الموقع</a></div></main></div></div></div></body></html>`;
+}
+function publicLoginPage(error = '') {
+  return loginPage(error)
+    .replace('<h1 class="h4 mt-3">إدارة الورشة</h1>', '<h1 class="h4 mt-3">تسجيل الدخول</h1>')
+    .replace('</head>', '<meta name="robots" content="noindex,nofollow"><link rel="icon" type="image/png" href="/favicon.png"></head>');
 }
 function legacyLandingPage() {
   return `<!doctype html>
@@ -184,29 +190,29 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url), path = url.pathname;
     if (request.method === 'OPTIONS') return new Response(null, { headers: { allow: 'GET, POST, PUT, DELETE, OPTIONS' } });
-    if (path === '/api/health') return json({ ok: (await env.DB.prepare('SELECT 1 AS ok').first())?.ok === 1, runtime: 'cloudflare-workers', database: 'd1', storage: 'r2' });
+    if (path === '/api/health') return json({ ok: (await env.DB.prepare('SELECT 1 AS ok').first())?.ok === 1 });
 
-    if (path === '/logout') return new Response(null, { status: 302, headers: { location: '/login', 'set-cookie': 'workshop_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' } });
+    if (path === '/logout') return new Response(null, { status: 302, headers: { location: '/login', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'set-cookie': 'workshop_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' } });
     if (path === '/login' && request.method === 'POST') {
       const form = await request.formData();
       const found = await env.DB.prepare(`SELECT u.* FROM Users u LEFT JOIN Agent_Profiles ap ON ap.User_ID=u.User_ID
         WHERE u.Username=? AND (u.Role!='Agent' OR COALESCE(ap.Status,'active')='active')`).bind(String(form.get('username') || '')).first();
-      if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) return html(loginPage('اسم المستخدم أو كلمة المرور غير صحيحة'), 401);
+      if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) return html(publicLoginPage('اسم المستخدم أو كلمة المرور غير صحيحة'), 401);
       const token = await makeToken(found, env.SESSION_SECRET);
-      return new Response(null, { status: 302, headers: { location: '/', 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` } });
+      return new Response(null, { status: 302, headers: { location: '/', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` } });
     }
     const clientPage = path.match(/^\/client\/(\d+)$/);
     const agentDetailPage = path.match(/^\/agents\/(\d+)$/);
     if (request.method === 'GET' && (pagePaths.has(path) || clientPage || agentDetailPage)) {
       const user = await userFor(request, env);
-      if (path === '/login') return user ? Response.redirect(new URL('/', request.url), 302) : html(loginPage());
-      if (!user && path === '/') return html(publicLandingPage(), 200, { 'cache-control': 'public, max-age=300' });
-      if (!user) return Response.redirect(new URL('/login', request.url), 302);
-      if (path === '/' && user.Role === 'Designer') return Response.redirect(new URL('/designer', request.url), 302);
-      if (path === '/' && user.Role === 'Laser_Op') return Response.redirect(new URL('/laser', request.url), 302);
-      if (path === '/' && user.Role === 'Router_Op') return Response.redirect(new URL('/router', request.url), 302);
-      if (path === '/' && user.Role === 'Agent') return Response.redirect(new URL('/agent', request.url), 302);
-      if (path === '/' && user.Role === 'Admin') return Response.redirect(new URL('/admin', request.url), 302);
+      if (path === '/login') return user ? privateRedirect('/', request) : html(publicLoginPage());
+      if (!user && path === '/') return html(publicLandingPage(), 200, { 'x-robots-tag': url.hostname === 'www.kazanjigroup.com' ? 'index, follow' : 'noindex, nofollow' });
+      if (!user) return privateRedirect('/login', request);
+      if (path === '/' && user.Role === 'Designer') return privateRedirect('/designer', request);
+      if (path === '/' && user.Role === 'Laser_Op') return privateRedirect('/laser', request);
+      if (path === '/' && user.Role === 'Router_Op') return privateRedirect('/router', request);
+      if (path === '/' && user.Role === 'Agent') return privateRedirect('/agent', request);
+      if (path === '/' && user.Role === 'Admin') return privateRedirect('/admin', request);
       if (path === '/admin' && user.Role === 'Admin') return html(legacyAdminPage({ name: user.Name }));
       if (path === '/agent' && user.Role === 'Agent') return html(legacyRolePage(agentTemplate, { name: user.Name, role: user.Role, username: user.Username }));
       if (path === '/designer' && user.Role === 'Designer') return html(legacyRolePage(designerTemplate, { name: user.Name, role: user.Role, username: user.Username }));
@@ -678,7 +684,7 @@ export default {
       const image = await env.DB.prepare('SELECT * FROM Agent_Images WHERE Image_ID=?').bind(Number(agentImageFile[1])).first();
       if (!image?.File_Path?.startsWith('r2://')) return json({ error: 'الصورة غير متاحة' }, 404);
       const object = await env.FILES.get(image.File_Path.slice(5)); if (!object) return json({ error: 'الصورة غير موجودة في التخزين' }, 404);
-      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `inline; filename="${cleanName(image.Original_Name)}"`, 'cache-control': 'no-store', ...(object.customMetadata?.optimization === 'v1' ? { 'x-image-optimization': 'v1' } : {}) } });
+      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `inline; filename="${cleanName(image.Original_Name)}"`, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...(object.customMetadata?.optimization === 'v1' ? { 'x-image-optimization': 'v1' } : {}) } });
     }
     const agentImageOptimize = path.match(/^\/api\/orders\/agent\/images\/(\d+)\/optimize$/);
     if (agentImageOptimize && request.method === 'POST') {
@@ -781,7 +787,7 @@ export default {
       const design = await env.DB.prepare('SELECT * FROM Designs WHERE Design_ID=?').bind(Number(designDownload[1])).first();
       if (!design?.FilePath?.startsWith('r2://')) return json({ error: 'ملف التصميم غير موجود' }, 404);
       const object = await env.FILES.get(design.FilePath.slice(5)); if (!object) return json({ error: 'الملف غير موجود في التخزين' }, 404);
-      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `attachment; filename="${cleanName(design.Original_Name)}"` } });
+      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `attachment; filename="${cleanName(design.Original_Name)}"`, 'x-robots-tag': 'noindex, nofollow' } });
     }
 
     if (path === '/api/orders/pending' && request.method === 'GET') {
@@ -1040,7 +1046,7 @@ export default {
       if (action === 'download' && request.method === 'GET') {
         const file = await env.DB.prepare("SELECT * FROM Order_Files WHERE Task_ID=? AND File_Type!='image' AND COALESCE(Is_Current,1)=1 ORDER BY Created_At DESC LIMIT 1").bind(taskId).first(); if (!file?.File_Path?.startsWith('r2://')) return json({ error: 'لا يوجد ملف تصميم مخزن في R2 لهذا الطلب' }, 404);
         const object = await env.FILES.get(file.File_Path.slice(5)); if (!object) return json({ error: 'الملف غير موجود' }, 404);
-        return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `attachment; filename="${cleanName(file.Original_Name)}"` } });
+        return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `attachment; filename="${cleanName(file.Original_Name)}"`, 'x-robots-tag': 'noindex, nofollow' } });
       }
     }
     const fileById = path.match(/^\/api\/files\/(download-file|image)\/(\d+)$/);
@@ -1051,7 +1057,7 @@ export default {
       if (!file.File_Path?.startsWith('r2://')) return json({ error: 'الملف غير متاح' }, 404);
       const object = await env.FILES.get(file.File_Path.slice(5)); if (!object) return json({ error: 'الملف غير موجود في التخزين' }, 404);
       const inline = fileById[1] === 'image';
-      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${cleanName(file.Original_Name)}"` } });
+      return new Response(object.body, { headers: { 'content-type': object.httpMetadata?.contentType || 'application/octet-stream', 'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${cleanName(file.Original_Name)}"`, 'x-robots-tag': 'noindex, nofollow' } });
     }
     const uploadImage = path.match(/^\/api\/files\/upload-image\/(\d+)$/);
     if (uploadImage && request.method === 'POST') {

@@ -16,7 +16,7 @@ function agentOrderQuery() {
 function json(value, status = 200, headers = {}) {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers }
   });
 }
 
@@ -176,6 +176,7 @@ async function readCustomFile(env, requestId, fileIndex, url) {
       'content-type': type,
       'content-disposition': attachmentDisposition(file.name, download),
       'cache-control': 'private, no-store',
+      'x-robots-tag': 'noindex, nofollow',
       'x-content-type-options': 'nosniff'
     }
   });

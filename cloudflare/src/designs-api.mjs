@@ -9,7 +9,7 @@ const UNLOCK_SECONDS = 60 * 60;
 function json(value, status = 200, headers = {}) {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers }
   });
 }
 
@@ -151,6 +151,7 @@ async function streamDesign(request, env, user, id, action) {
       'content-type': object.httpMetadata?.contentType || mimeFor(name),
       'content-disposition': disposition(name, action === 'download'),
       'cache-control': 'private, no-store',
+      'x-robots-tag': 'noindex, nofollow',
       'x-content-type-options': 'nosniff',
       ...(String(name).toLowerCase().endsWith('.svg') ? { 'content-security-policy': 'sandbox' } : {})
     }

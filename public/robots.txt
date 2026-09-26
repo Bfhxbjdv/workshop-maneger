@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /js/
+Disallow: /logout
+
+Sitemap: https://www.kazanjigroup.com/sitemap.xml

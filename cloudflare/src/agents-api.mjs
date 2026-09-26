@@ -7,7 +7,7 @@ const PAYOUT_STATUSES = new Set(['pending', 'processing', 'completed', 'failed',
 function json(value, status = 200, headers = {}) {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers }
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers }
   });
 }
 
