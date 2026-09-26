@@ -5,7 +5,6 @@ export const landingHtml = String.raw`<!doctype html>
 <meta name="robots" content="index,follow,max-image-preview:large">
 <link rel="canonical" href="https://www.kazanjigroup.com/">
 <link rel="icon" type="image/png" sizes="160x160" href="/favicon.png">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="apple-touch-icon" sizes="160x160" href="/favicon.png">
 <meta name="theme-color" content="#252522">
 <meta property="og:type" content="website"><meta property="og:locale" content="ar_SY">

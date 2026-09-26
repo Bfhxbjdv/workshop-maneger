@@ -88,6 +88,7 @@ test('public landing exposes a canonical brand identity and a square logo icon',
   const page = await response.text();
   assert.match(page, /<link rel="canonical" href="https:\/\/www\.kazanjigroup\.com\/">/);
   assert.match(page, /<link rel="icon" type="image\/png"[^>]*href="\/favicon\.png">/);
+  assert.equal((page.match(/<link rel="icon"/g) || []).length, 1, 'the homepage should advertise one favicon');
   assert.match(page, /<meta property="og:site_name" content="مجموعة قزنجي">/);
   const structuredData = JSON.parse(page.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1] || 'null');
   const website = structuredData?.['@graph']?.find(item => item['@type'] === 'WebSite');
@@ -101,6 +102,23 @@ test('public landing exposes a canonical brand identity and a square logo icon',
   assert.equal(png.subarray(1, 4).toString(), 'PNG');
   assert.equal(png.readUInt32BE(16), png.readUInt32BE(20));
   assert.ok(png.readUInt32BE(16) >= 112);
+  const ico = readFileSync(join(root, 'public', 'favicon.ico'));
+  assert.equal(ico.readUInt16LE(2), 1, 'the default favicon path needs a valid ICO');
+  assert.equal(ico.readUInt16LE(4), 1);
+  assert.equal(ico.readUInt32LE(18), 22);
+});
+
+test('HEAD matches the public homepage, and HTTP redirects to the canonical HTTPS URL', async () => {
+  const worker = await loadWorker(), env = environment();
+  const head = await request(worker, env, '/', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.doesNotMatch(head.headers.get('x-robots-tag') || '', /noindex/i);
+  assert.equal(await head.text(), '');
+
+  const insecure = await worker.fetch(new Request('http://www.kazanjigroup.com/', { method: 'HEAD' }), env);
+  assert.equal(insecure.status, 308);
+  assert.equal(insecure.headers.get('location'), 'https://www.kazanjigroup.com/');
 });
 
 test('the duplicate workers.dev landing is not indexable', async () => {
@@ -116,8 +134,12 @@ test('login is neutral and excluded from search results', async () => {
   assert.equal(response.status, 200);
   const page = await response.text();
   assert.match(page, /تسجيل\s+الدخول/);
+  assert.match(page, /href="\/favicon\.png"/);
   assert.doesNotMatch(page, /نظام\s+إدارة|إدارة\s+الورشة|ورشة\s+كازانجي|workshop\s+manager/i);
   assertNoIndex(response, page);
+  const head = await request(worker, env, '/login', { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assertNoIndex(head);
 });
 
 test('robots and sitemap expose only the public website for indexing', async () => {
@@ -159,7 +181,9 @@ test('health response reveals no D1/R2 internals, and private HTML/JSON is noind
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const privatePage = await request(worker, env, '/admin', { headers: { cookie } });
   assert.equal(privatePage.status, 200);
-  assertNoIndex(privatePage, await privatePage.text());
+  const privateHtml = await privatePage.text();
+  assertNoIndex(privatePage, privateHtml);
+  assert.match(privateHtml, /href="\/favicon\.png"/);
   const privateJson = await request(worker, env, '/api/auth/me', { headers: { cookie } });
   assert.equal(privateJson.status, 200);
   assertNoIndex(privateJson);

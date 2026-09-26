@@ -33,7 +33,10 @@ function publicLandingPage() {
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
-const html = (value, status = 200, headers = {}) => new Response(value, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
+const withFavicon = value => typeof value === 'string' && value.includes('</head>') && !value.includes('href="/favicon.png"')
+  ? value.replace('</head>', '<link rel="icon" type="image/png" sizes="160x160" href="/favicon.png"></head>')
+  : value;
+const html = (value, status = 200, headers = {}) => new Response(withFavicon(value), { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
 const privateRedirect = (location, request) => new Response(null, { status: 302, headers: { location: new URL(location, request.url).href, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
 const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users', '/account']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -189,6 +192,10 @@ async function removeUnreferencedR2Files(env, paths) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url), path = url.pathname;
+    if (path === '/' && url.hostname === 'www.kazanjigroup.com' && url.protocol === 'http:') {
+      url.protocol = 'https:';
+      return new Response(null, { status: 308, headers: { location: url.href } });
+    }
     if (request.method === 'OPTIONS') return new Response(null, { headers: { allow: 'GET, POST, PUT, DELETE, OPTIONS' } });
     if (path === '/api/health') return json({ ok: (await env.DB.prepare('SELECT 1 AS ok').first())?.ok === 1 });
 
@@ -200,6 +207,18 @@ export default {
       if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) return html(publicLoginPage('اسم المستخدم أو كلمة المرور غير صحيحة'), 401);
       const token = await makeToken(found, env.SESSION_SECRET);
       return new Response(null, { status: 302, headers: { location: '/', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` } });
+    }
+    if (request.method === 'HEAD' && (path === '/' || path === '/login')) {
+      const user = await userFor(request, env);
+      if (path === '/login' && user) return privateRedirect('/', request);
+      if (path === '/' && user) {
+        const rolePath = { Designer: '/designer', Laser_Op: '/laser', Router_Op: '/router', Agent: '/agent', Admin: '/admin' }[user.Role];
+        if (rolePath) return privateRedirect(rolePath, request);
+      }
+      return new Response(null, { status: 200, headers: {
+        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+        'x-robots-tag': path === '/' && !user && url.hostname === 'www.kazanjigroup.com' ? 'index, follow' : 'noindex, nofollow'
+      } });
     }
     const clientPage = path.match(/^\/client\/(\d+)$/);
     const agentDetailPage = path.match(/^\/agents\/(\d+)$/);
