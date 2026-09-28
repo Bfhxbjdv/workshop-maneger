@@ -32,15 +32,44 @@ function publicLandingPage() {
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
-const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
+const securityHeaders = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'SAMEORIGIN',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=()'
+};
+const json = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...securityHeaders, ...headers } });
 const withFavicon = value => typeof value === 'string' && value.includes('</head>') && !value.includes('href="/favicon.png"')
   ? value.replace('</head>', '<link rel="icon" type="image/png" sizes="160x160" href="/favicon.png"></head>')
   : value;
-const html = (value, status = 200, headers = {}) => new Response(withFavicon(value), { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
-const privateRedirect = (location, request) => new Response(null, { status: 302, headers: { location: new URL(location, request.url).href, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
+const html = (value, status = 200, headers = {}) => new Response(withFavicon(value), { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...securityHeaders, ...headers } });
+const privateRedirect = (location, request) => new Response(null, { status: 302, headers: { location: new URL(location, request.url).href, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...securityHeaders } });
 const pagePaths = new Set(['/login', '/', '/admin', '/designer', '/laser', '/router', '/agent', '/clients', '/inventory', '/designs', '/agents', '/expenses', '/invoices', '/users', '/account']);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const withImageCompression = page => page.replace('</head>', '<script src="/js/image-compression.js?v=2"></script></head>');
+// A small edge-local limiter protects the login endpoint from password guessing.
+// It intentionally fails open after an isolate restart; authentication remains
+// backed by D1 and this is only a first line of defence.
+const loginAttempts = new Map();
+function clientAddress(request) {
+  return request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+}
+function loginLimit(request) {
+  const now = Date.now(), key = clientAddress(request), item = loginAttempts.get(key);
+  if (!item || now - item.startedAt > 10 * 60 * 1000) return null;
+  return item.failures >= 5 ? Math.ceil((10 * 60 * 1000 - (now - item.startedAt)) / 1000) : null;
+}
+function recordLoginFailure(request) {
+  const now = Date.now(), key = clientAddress(request), item = loginAttempts.get(key);
+  if (!item || now - item.startedAt > 10 * 60 * 1000) loginAttempts.set(key, { startedAt: now, failures: 1 });
+  else item.failures += 1;
+}
+function clearLoginFailures(request) { loginAttempts.delete(clientAddress(request)); }
+function mutationOriginAllowed(request) {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) return true;
+  const origin = request.headers.get('origin');
+  return !origin || origin === new URL(request.url).origin;
+}
 async function concurrently(items, limit, work) {
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -196,15 +225,22 @@ export default {
       url.protocol = 'https:';
       return new Response(null, { status: 308, headers: { location: url.href } });
     }
-    if (request.method === 'OPTIONS') return new Response(null, { headers: { allow: 'GET, POST, PUT, DELETE, OPTIONS' } });
+    if (!mutationOriginAllowed(request)) return json({ error: 'مصدر الطلب غير مسموح' }, 403);
+    if (request.method === 'OPTIONS') return new Response(null, { headers: { allow: 'GET, POST, PUT, DELETE, OPTIONS', ...securityHeaders } });
     if (path === '/api/health') return json({ ok: (await env.DB.prepare('SELECT 1 AS ok').first())?.ok === 1 });
 
     if (path === '/logout') return new Response(null, { status: 302, headers: { location: '/login', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'set-cookie': 'workshop_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' } });
     if (path === '/login' && request.method === 'POST') {
+      const retryAfter = loginLimit(request);
+      if (retryAfter) return html(publicLoginPage('تم إيقاف محاولات الدخول مؤقتًا. حاول بعد قليل.'), 429, { 'retry-after': String(retryAfter) });
       const form = await request.formData();
       const found = await env.DB.prepare(`SELECT u.* FROM Users u LEFT JOIN Agent_Profiles ap ON ap.User_ID=u.User_ID
         WHERE u.Username=? AND (u.Role!='Agent' OR COALESCE(ap.Status,'active')='active')`).bind(String(form.get('username') || '')).first();
-      if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) return html(publicLoginPage('اسم المستخدم أو كلمة المرور غير صحيحة'), 401);
+      if (!found || !await bcrypt.compare(String(form.get('password') || ''), found.Password)) {
+        recordLoginFailure(request);
+        return html(publicLoginPage('اسم المستخدم أو كلمة المرور غير صحيحة'), 401);
+      }
+      clearLoginFailures(request);
       const token = await makeToken(found, env.SESSION_SECRET);
       return new Response(null, { status: 302, headers: { location: '/', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` } });
     }
@@ -260,10 +296,16 @@ export default {
     }
 
     if (path === '/api/auth/login' && request.method === 'POST') {
+      const retryAfter = loginLimit(request);
+      if (retryAfter) return json({ error: 'تم إيقاف محاولات الدخول مؤقتًا. حاول بعد قليل.' }, 429, { 'retry-after': String(retryAfter) });
       const body = await request.json().catch(() => ({}));
       const found = await env.DB.prepare(`SELECT u.* FROM Users u LEFT JOIN Agent_Profiles ap ON ap.User_ID=u.User_ID
         WHERE u.Username=? AND (u.Role!='Agent' OR COALESCE(ap.Status,'active')='active')`).bind(String(body.username || '')).first();
-      if (!found || !body.password || !await bcrypt.compare(String(body.password), found.Password)) return json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' }, 401);
+      if (!found || !body.password || !await bcrypt.compare(String(body.password), found.Password)) {
+        recordLoginFailure(request);
+        return json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' }, 401);
+      }
+      clearLoginFailures(request);
       const token = await makeToken(found, env.SESSION_SECRET);
       return json({ user: { id: found.User_ID, name: found.Name, role: found.Role } }, 200, { 'set-cookie': `workshop_session=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400` });
     }
@@ -467,6 +509,12 @@ export default {
         if (!name || !Number.isFinite(quantity) || quantity < 0) return json({ error: 'اسم الخامة والكمية الصحيحة مطلوبان' }, 400);
         const result = await env.DB.prepare('INSERT INTO Inventory (Material_Name, Thickness, Quantity, Cost_Per_Unit) VALUES (?, ?, ?, ?)')
           .bind(name, String(body.Thickness || '').trim(), quantity, Math.max(0, Number(body.Cost_Per_Unit || 0))).run();
+        try {
+          await env.DB.prepare('INSERT INTO Inventory_Movements (Material_ID, User_ID, Movement_Type, Quantity, Quantity_Before, Quantity_After, Notes) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .bind(result.meta.last_row_id, a.user.User_ID, 'initial', quantity, 0, quantity, 'إضافة خامة جديدة').run();
+        } catch (error) {
+          if (!/no such table:\s*Inventory_Movements/i.test(String(error?.message || error))) console.warn('Inventory movement ledger unavailable:', error);
+        }
         return json({ material: await env.DB.prepare('SELECT * FROM Inventory WHERE Material_ID=?').bind(result.meta.last_row_id).first() }, 201);
       }
     }
@@ -476,7 +524,16 @@ export default {
       if (a.user.Role !== 'Admin') return json({ error: 'تعديل المخزون للمدير فقط' }, 403);
       const body = await request.json().catch(() => ({})), name = String(body.Material_Name || '').trim(), quantity = Number(body.Quantity);
       if (!name || !Number.isFinite(quantity) || quantity < 0) return json({ error: 'اسم الخامة والكمية الصحيحة مطلوبان' }, 400);
+      const materialId = Number(inventoryRoute[1]);
+      const previous = await env.DB.prepare('SELECT Quantity FROM Inventory WHERE Material_ID=?').bind(materialId).first();
+      if (!previous) return json({ error: 'الخامة غير موجودة' }, 404);
       await env.DB.prepare('UPDATE Inventory SET Material_Name=?, Thickness=?, Quantity=?, Cost_Per_Unit=? WHERE Material_ID=?').bind(name, String(body.Thickness || ''), quantity, Math.max(0, Number(body.Cost_Per_Unit || 0)), Number(inventoryRoute[1])).run();
+      try {
+        await env.DB.prepare('INSERT INTO Inventory_Movements (Material_ID, User_ID, Movement_Type, Quantity, Quantity_Before, Quantity_After, Notes) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .bind(materialId, a.user.User_ID, 'adjustment', quantity - Number(previous.Quantity || 0), Number(previous.Quantity || 0), quantity, 'تعديل يدوي من المدير').run();
+      } catch (error) {
+        if (!/no such table:\s*Inventory_Movements/i.test(String(error?.message || error))) console.warn('Inventory movement ledger unavailable:', error);
+      }
       return json({ success: true });
     }
     if (inventoryRoute && request.method === 'DELETE') {
@@ -895,9 +952,11 @@ export default {
           ? [{ Material_ID: order.Material_ID, Quantity: Number(order.Material_Qty) }] : [];
         if (!demand.length && order.Material_ID && order.Quantity_Unit === 'قطعة') return json({ error: 'حدد ألواح القص المستهلكة من المصمم قبل إتمام طلب القطع' }, 409);
         let cost = 0;
+        const stockSnapshots = [];
         for (const row of demand) {
           const stock = await env.DB.prepare('SELECT Quantity, Cost_Per_Unit FROM Inventory WHERE Material_ID=?').bind(row.Material_ID).first();
           if (!stock || Number(stock.Quantity) < Number(row.Quantity)) return json({ error: `المخزون غير كافٍ للخامة رقم ${row.Material_ID}` }, 409);
+          stockSnapshots.push({ materialId: Number(row.Material_ID), before: Number(stock.Quantity), quantity: Number(row.Quantity) });
           cost += Number(row.Quantity) * Number(stock.Cost_Per_Unit || 0);
         }
         const claim = `cut:${crypto.randomUUID()}`;
@@ -908,6 +967,13 @@ export default {
         statements.push(env.DB.prepare("UPDATE Orders SET Status='تم الانتهاء من القص', Cost=?, Profit=COALESCE(Price,0)-?, Inventory_Deducted_At=CURRENT_TIMESTAMP, Updated_At=CURRENT_TIMESTAMP WHERE Task_ID=? AND Inventory_Deducted_At=?").bind(cost, cost, order.Task_ID, claim));
         const changes = await env.DB.batch(statements);
         if (!changes[0].meta.changes) return json({ error: 'تعذر إتمام القص؛ تحقق من حالة الطلب والمخزون' }, 409);
+        // Ledger writes are deliberately best-effort so an older test/staging
+        // database without migration 0004 cannot block the stock deduction.
+        try {
+          await Promise.all(stockSnapshots.map(snapshot => env.DB.prepare('INSERT INTO Inventory_Movements (Material_ID, Task_ID, User_ID, Movement_Type, Quantity, Quantity_Before, Quantity_After, Notes) SELECT ?, ?, ?, ?, ?, ?, Quantity, ? FROM Inventory WHERE Material_ID=?').bind(snapshot.materialId, order.Task_ID, a.user.User_ID, 'cut', -snapshot.quantity, snapshot.before, `خصم مواد للطلب #${order.Task_ID}`, snapshot.materialId).run()));
+        } catch (error) {
+          if (!/no such table:\s*Inventory_Movements/i.test(String(error?.message || error))) console.warn('Inventory movement ledger unavailable:', error);
+        }
         await logAction(env, 'cut_completed', a.user.User_ID, { taskId: order.Task_ID, materials: demand });
       } else if (next === 'تم التسليم') {
         if (!['Admin', 'Laser_Op', 'Router_Op'].includes(role)) return json({ error: 'لا تملك صلاحية تسليم الطلب' }, 403);
@@ -1092,6 +1158,12 @@ export default {
       return json({ success: true });
     }
     const asset = await env.ASSETS.fetch(request);
-    return asset.status === 404 ? json({ error: 'المسار غير موجود' }, 404) : asset;
+    if (asset.status === 404) return json({ error: 'المسار غير موجود' }, 404);
+    const assetHeaders = new Headers(asset.headers);
+    if (/^\/(?:css|js|images)\//.test(path) || /^\/favicon\.(?:png|ico|svg)$/.test(path)) {
+      assetHeaders.set('cache-control', 'public, max-age=86400, stale-while-revalidate=604800');
+    }
+    assetHeaders.set('x-content-type-options', 'nosniff');
+    return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers: assetHeaders });
   }
 };

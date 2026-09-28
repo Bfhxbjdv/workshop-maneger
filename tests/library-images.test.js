@@ -38,6 +38,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(async () => {
+  server.closeAllConnections?.();
   await new Promise(resolve => server.close(resolve));
   for (const filename of createdFiles) fs.unlinkSync(filename);
 });

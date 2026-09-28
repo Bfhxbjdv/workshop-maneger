@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "test": "node --test tests/*.test.js",
     "init-db": "node database/init.js",
     "backup": "node database/backup.js"
   },

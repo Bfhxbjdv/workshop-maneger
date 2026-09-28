@@ -188,3 +188,17 @@ test('health response reveals no D1/R2 internals, and private HTML/JSON is noind
   assert.equal(privateJson.status, 200);
   assertNoIndex(privateJson);
 });
+
+test('security headers and same-origin protection are present on Worker responses', async () => {
+  const worker = await loadWorker(), env = environment();
+  const health = await request(worker, env, '/api/health');
+  assert.equal(health.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(health.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+  assert.equal(health.headers.get('x-frame-options'), 'SAMEORIGIN');
+  const crossOrigin = await request(worker, env, '/api/auth/login', {
+    method: 'POST',
+    headers: { origin: 'https://attacker.example', 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'test-password' })
+  });
+  assert.equal(crossOrigin.status, 403);
+});
